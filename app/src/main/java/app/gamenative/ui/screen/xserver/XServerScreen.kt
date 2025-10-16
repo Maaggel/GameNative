@@ -208,6 +208,13 @@ fun XServerScreen(
     var areControlsVisible = false
 
     val emulateKeyboardMouse = ContainerUtils.getContainer(context, appId).isEmulateKeyboardMouse()
+    // Apply per-container input workarounds
+    run {
+        val container = ContainerUtils.getContainer(context, appId)
+        val fixAxes = container.isFixSwappedLeftStickAxes()
+        com.winlator.inputcontrols.ExternalController.setSwapLeftStickAxes(fixAxes)
+        Timber.tag("AxisSwap").i("Applying swapLeftStickAxes=%s for container %s", fixAxes, container.id)
+    }
 
     val gameBack: () -> Unit = gameBack@{
         val imeVisible = ViewCompat.getRootWindowInsets(view)

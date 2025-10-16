@@ -209,6 +209,9 @@ object ContainerUtils {
             strictShaderMath = strictShaderMath,
             videoMemorySize = videoMemorySize,
             mouseWarpOverride = mouseWarpOverride,
+            fixSwappedLeftStickAxes = try {
+                container.isFixSwappedLeftStickAxes()
+            } catch (e: Exception) { false },
         )
     }
 
@@ -275,6 +278,10 @@ object ContainerUtils {
         container.box86Preset = containerData.box86Preset
         container.box64Preset = containerData.box64Preset
         container.isSdlControllerAPI = containerData.sdlControllerAPI
+        try {
+            container.setFixSwappedLeftStickAxes(containerData.fixSwappedLeftStickAxes)
+            Timber.tag("AxisSwap").i("Saved fixSwappedLeftStickAxes=%s for container %s", containerData.fixSwappedLeftStickAxes, container.id)
+        } catch (_: Exception) {}
         container.desktopTheme = containerData.desktopTheme
         container.graphicsDriverVersion = containerData.graphicsDriverVersion
         container.setDisableMouseInput(containerData.disableMouseInput)
@@ -323,6 +330,7 @@ object ContainerUtils {
         // Generate/update per-container emulation profile when enabled
         try {
             if (containerData.emulateKeyboardMouse) {
+                Timber.tag("AxisSwap").i("[EmuProfile] Requested generation/update for container %s (emulateKBM=true)", container.id)
                 generateOrUpdateEmulationProfile(context, container)
             }
         } catch (e: Exception) {
@@ -565,6 +573,7 @@ object ContainerUtils {
      * The profile name is the container id as a string, so it can be looked up easily at runtime.
      */
     fun generateOrUpdateEmulationProfile(context: Context, container: Container): ControlsProfile {
+        Timber.tag("AxisSwap").i("[EmuProfile] Generating for container %s (swapFix=%s, emulateKBM=%s)", container.id, container.isFixSwappedLeftStickAxes, container.isEmulateKeyboardMouse())
         val inputControlsManager = InputControlsManager(context)
         val profiles = inputControlsManager.getProfiles(false)
 
@@ -573,6 +582,7 @@ object ContainerUtils {
             ?: profiles.getOrNull(2)
             ?: profiles.first()
         val baseFile = ControlsProfile.getProfileFile(context, baseProfile.id)
+        Timber.tag("AxisSwap").d("[EmuProfile] Base profile selected: id=%d, name=%s", baseProfile.id, baseProfile.name)
 
         val profileJSONObject = org.json.JSONObject(FileUtils.readString(baseFile))
         val elementsJSONArray = profileJSONObject.getJSONArray("elements")
@@ -656,11 +666,21 @@ object ContainerUtils {
                 controllerBindingsJSONArray.put(obj)
             }
 
-            // Left stick -> WASD
-            addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_Y, -1), "KEY_W")
-            addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_X, +1), "KEY_D")
-            addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_Y, +1), "KEY_S")
-            addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_X, -1), "KEY_A")
+            // Left stick -> WASD (supports per-container axis swap workaround)
+            if (container.isFixSwappedLeftStickAxes) {
+                Timber.tag("AxisSwap").i("[EmuProfile] Applying SWAPPED WASD mapping for left stick")
+                // Swap X/Y axes
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_X, -1), "KEY_W")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_Y, +1), "KEY_D")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_X, +1), "KEY_S")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_Y, -1), "KEY_A")
+            } else {
+                Timber.tag("AxisSwap").i("[EmuProfile] Applying NORMAL WASD mapping for left stick")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_Y, -1), "KEY_W")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_X, +1), "KEY_D")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_Y, +1), "KEY_S")
+                addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_X, -1), "KEY_A")
+            }
 
             // Right stick -> mouse
             addBinding(com.winlator.inputcontrols.ExternalControllerBinding.getKeyCodeForAxis(android.view.MotionEvent.AXIS_RZ, -1), "MOUSE_MOVE_UP")
@@ -702,6 +722,7 @@ object ContainerUtils {
             ?: inputControlsManager.createProfile(profileName)
 
         val targetFile = ControlsProfile.getProfileFile(context, targetProfile.id)
+        Timber.tag("AxisSwap").i("[EmuProfile] Writing profile for container %s to %s (profileId=%d, name=%s)", container.id, targetFile.absolutePath, targetProfile.id, targetProfile.name)
         FileUtils.writeString(targetFile, profileJSONObject.toString())
 
         return targetProfile

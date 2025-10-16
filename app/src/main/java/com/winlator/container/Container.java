@@ -3,6 +3,8 @@ package com.winlator.container;
 import android.os.Environment;
 import android.util.Log;
 
+import timber.log.Timber;
+
 import com.winlator.box86_64.Box86_64Preset;
 import com.winlator.core.DefaultVersion;
 import com.winlator.core.envvars.EnvVars;
@@ -93,6 +95,9 @@ public class Container {
     private boolean touchscreenMode = false;
     // Steam client type for selecting appropriate Box64 RC config: normal, light, ultralight
     private String steamType = DefaultVersion.STEAM_TYPE;
+
+    // Fix swapped left stick axes for some Unity/SDL games
+    private boolean fixSwappedLeftStickAxes = false;
 
     // Emulate keyboard/mouse using controller: left stick=WASD, right stick=mouse
     private boolean emulateKeyboardMouse = false;
@@ -281,6 +286,16 @@ public class Container {
 
     public void setSdlControllerAPI(boolean sdlControllerAPI) {
         this.sdlControllerAPI = sdlControllerAPI;
+    }
+
+    public boolean isFixSwappedLeftStickAxes() {
+        return fixSwappedLeftStickAxes;
+    }
+
+    public void setFixSwappedLeftStickAxes(boolean fix) {
+        this.fixSwappedLeftStickAxes = fix;
+        Log.i("Container", "[Input] fixSwappedLeftStickAxes set to " + fix + " for container " + id);
+        Timber.tag("AxisSwap").i("fixSwappedLeftStickAxes set to %s for container %s", fix, id);
     }
 
     public String getLanguage() {
@@ -559,6 +574,7 @@ public class Container {
             data.put("installPath", installPath);
             data.put("steamType", steamType);
             data.put("language", language);
+            data.put("fixSwappedLeftStickAxes", fixSwappedLeftStickAxes);
 
             // Emulated keyboard/mouse controller mappings
             data.put("emulateKeyboardMouse", emulateKeyboardMouse);
@@ -632,6 +648,9 @@ public class Container {
                     break;
                 case "language" :
                     setLanguage(data.getString(key));
+                    break;
+                case "fixSwappedLeftStickAxes":
+                    setFixSwappedLeftStickAxes(data.getBoolean(key));
                     break;
                 case "inputType" :
                     setInputType(data.getInt(key));

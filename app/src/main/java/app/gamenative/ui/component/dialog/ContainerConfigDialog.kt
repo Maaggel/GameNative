@@ -911,6 +911,15 @@ fun ContainerConfigDialog(
                                 onCheckedChange = { config = config.copy(touchscreenMode = it) }
                             )
 
+                            // Fix swapped left stick axes (Rounds)
+                            SettingsSwitch(
+                                colors = settingsTileColorsAlt(),
+                                title = { Text(text = "Fix swapped left stick axes") },
+                                subtitle = { Text(text = "Use if left stick up/down acts as left/right in-game") },
+                                state = config.fixSwappedLeftStickAxes,
+                                onCheckedChange = { config = config.copy(fixSwappedLeftStickAxes = it) }
+                            )
+
                             // Emulate keyboard and mouse
                             SettingsSwitch(
                                 colors = settingsTileColorsAlt(),

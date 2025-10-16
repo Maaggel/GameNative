@@ -515,6 +515,26 @@ public class ControlElement {
                 float thumbstickX = currentPosition != null ? currentPosition.x : cx;
                 float thumbstickY = currentPosition != null ? currentPosition.y : cy;
 
+                // Ensure visual matches axis swap for left stick even if currentPosition was set elsewhere
+                try {
+                    final Binding b0 = getBindingAt(0);
+                    final boolean isLeftStick = b0 != null && b0.name().startsWith("GAMEPAD_LEFT_THUMB");
+                    if (isLeftStick && com.winlator.inputcontrols.ExternalController.isSwapLeftStickAxes() && currentPosition != null) {
+                        float radiusPx = boundingBox.width() * 0.5f;
+                        float dx = (currentPosition.x - cx) / radiusPx;
+                        float dy = (currentPosition.y - cy) / radiusPx;
+                        // swap
+                        float sx = dy;
+                        float sy = dx;
+                        // clamp back to radius and convert to pixels
+                        sx = com.winlator.math.Mathf.clamp(sx, -1, 1);
+                        sy = com.winlator.math.Mathf.clamp(sy, -1, 1);
+                        thumbstickX = cx + sx * radiusPx;
+                        thumbstickY = cy + sy * radiusPx;
+                        timber.log.Timber.tag("AxisSwap").d("[Virtual] Visual swap applied for left stick (thumbX=%.1f, thumbY=%.1f)", thumbstickX, thumbstickY);
+                    }
+                } catch (Throwable ignored) {}
+
                 short thumbRadius = (short) (snappingSize * 3.5f * scale);
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(ColorUtils.setAlphaComponent(primaryColor, 50));
@@ -647,13 +667,28 @@ public class ControlElement {
             }
 
             if (type == Type.STICK) {
+                // Apply per-container workaround: swap left stick X/Y for virtual controls when enabled
+                float sx = deltaX;
+                float sy = deltaY;
+                try {
+                    // Detect if this STICK element represents the left thumb stick based on bindings
+                    final Binding b0 = getBindingAt(0);
+                    final boolean isLeftStick = b0 != null && b0.name().startsWith("GAMEPAD_LEFT_THUMB");
+                    if (isLeftStick && com.winlator.inputcontrols.ExternalController.isSwapLeftStickAxes()) {
+                        // swap axes
+                        sx = deltaY;
+                        sy = deltaX;
+                        timber.log.Timber.tag("AxisSwap").d("[Virtual] Swapping axes for left stick element (sx=%.3f, sy=%.3f)", sx, sy);
+                    }
+                } catch (Throwable ignored) { }
+
                 if (currentPosition == null) currentPosition = new PointF();
-                currentPosition.x = boundingBox.left + deltaX * radius + radius;
-                currentPosition.y = boundingBox.top + deltaY * radius + radius;
-                final boolean[] states = {deltaY <= -STICK_DEAD_ZONE, deltaX >= STICK_DEAD_ZONE, deltaY >= STICK_DEAD_ZONE, deltaX <= -STICK_DEAD_ZONE};
+                currentPosition.x = boundingBox.left + sx * radius + radius;
+                currentPosition.y = boundingBox.top + sy * radius + radius;
+                final boolean[] states = {sy <= -STICK_DEAD_ZONE, sx >= STICK_DEAD_ZONE, sy >= STICK_DEAD_ZONE, sx <= -STICK_DEAD_ZONE};
 
                 for (byte i = 0; i < 4; i++) {
-                    float value = i == 1 || i == 3 ? deltaX : deltaY;
+                    float value = i == 1 || i == 3 ? sx : sy;
                     Binding binding = getBindingAt(i);
                     if (binding.isGamepad()) {
                         value = Mathf.clamp(Math.max(0, Math.abs(value) - 0.01f) * Mathf.sign(value) * STICK_SENSITIVITY, -1, 1);

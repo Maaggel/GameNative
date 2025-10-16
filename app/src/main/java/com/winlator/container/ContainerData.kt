@@ -60,6 +60,8 @@ data class ContainerData(
     val emulateKeyboardMouse: Boolean = false,
     /** Button->Binding name map (JSON string) for emulation UI persistence **/
     val controllerEmulationBindings: String = "",
+    /** Fix swapped left stick axes for some Unity/SDL games */
+    val fixSwappedLeftStickAxes: Boolean = false,
 ) {
     companion object {
         val Saver = mapSaver(
@@ -101,6 +103,7 @@ data class ContainerData(
                     "language" to state.language,
                     "emulateKeyboardMouse" to state.emulateKeyboardMouse,
                     "controllerEmulationBindings" to state.controllerEmulationBindings,
+                                        "fixSwappedLeftStickAxes" to state.fixSwappedLeftStickAxes,
                 )
             },
             restore = { savedMap ->
@@ -141,6 +144,7 @@ data class ContainerData(
                     language = (savedMap["language"] as? String) ?: "english",
                     emulateKeyboardMouse = (savedMap["emulateKeyboardMouse"] as? Boolean) ?: false,
                     controllerEmulationBindings = (savedMap["controllerEmulationBindings"] as? String) ?: "",
+                                        fixSwappedLeftStickAxes = (savedMap["fixSwappedLeftStickAxes"] as? Boolean) ?: false,
                 )
             },
         )

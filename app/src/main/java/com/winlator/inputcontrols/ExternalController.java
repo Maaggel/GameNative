@@ -16,7 +16,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
+import timber.log.Timber;
 
 public class ExternalController {
     public static final float STICK_DEAD_ZONE = 0.15f;
@@ -39,6 +39,14 @@ public class ExternalController {
     private final ArrayList<ExternalControllerBinding> controllerBindings = new ArrayList<>();
     public final GamepadState state = new GamepadState();
     private boolean processTriggerButtonOnMotionEvent = true;
+
+    // Workaround: swap left stick X/Y axes for specific games (e.g., Unity/SDL variants)
+    private static volatile boolean swapLeftStickAxes = false;
+    public static void setSwapLeftStickAxes(boolean swap) {
+        swapLeftStickAxes = swap;
+        Timber.tag("AxisSwap").i("swapLeftStickAxes set to %s", swap);
+    }
+    public static boolean isSwapLeftStickAxes() { return swapLeftStickAxes; }
 
     public String getName() {
         return this.name;
@@ -154,11 +162,21 @@ public class ExternalController {
 
     private void processJoystickInput(MotionEvent event, int historyPos) {
         boolean z = false;
-        this.state.thumbLX = getCenteredAxis(event, MotionEvent.AXIS_X, historyPos);
-        this.state.thumbLY = getCenteredAxis(event, MotionEvent.AXIS_Y, historyPos);
+        float cx = getCenteredAxis(event, MotionEvent.AXIS_X, historyPos);
+        float cy = getCenteredAxis(event, MotionEvent.AXIS_Y, historyPos);
+        if (swapLeftStickAxes) {
+            this.state.thumbLX = cy;
+            this.state.thumbLY = cx;
+        } else {
+            this.state.thumbLX = cx;
+            this.state.thumbLY = cy;
+        }
         this.state.thumbRX = getCenteredAxis(event, MotionEvent.AXIS_Z, historyPos);
         this.state.thumbRY = getCenteredAxis(event, MotionEvent.AXIS_RZ, historyPos);
         if (historyPos == -1) {
+            // Log once per event batch to reduce spam
+            Timber.tag("AxisSwap").d("Motion (swap=%s) L(rawX=%.3f, rawY=%.3f) -> L(finalX=%.3f, finalY=%.3f) R(X=%.3f,Y=%.3f)",
+                    swapLeftStickAxes, cx, cy, this.state.thumbLX, this.state.thumbLY, this.state.thumbRX, this.state.thumbRY);
             float axisX = getCenteredAxis(event, MotionEvent.AXIS_HAT_X, historyPos);
             float axisY = getCenteredAxis(event, MotionEvent.AXIS_HAT_Y, historyPos);
             GamepadState gamepadState = this.state;
