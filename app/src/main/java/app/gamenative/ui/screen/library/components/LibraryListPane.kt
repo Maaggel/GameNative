@@ -53,10 +53,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
 import app.gamenative.PrefManager
 import app.gamenative.utils.DeviceUtils
 import kotlinx.coroutines.flow.filterNotNull
@@ -81,11 +86,22 @@ internal fun LibraryListPane(
     onSearchQuery: (String) -> Unit,
     onNavigateRoute: (String) -> Unit,
     onGoOnline: () -> Unit,
+    onRefresh: () -> Unit,
     isOffline: Boolean = false,
 ) {
     val expandedFab by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
     val snackBarHost = remember { SnackbarHostState() }
     val installedCount = remember { DownloadService.getDownloadDirectoryApps().count() }
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    // Reset refreshing state when the list updates (indicating refresh is complete)
+    LaunchedEffect(state.appInfoList.size, state.totalAppsInFilter) {
+        if (isRefreshing) {
+            // Small delay to ensure UI updates smoothly
+            delay(300)
+            isRefreshing = false
+        }
+    }
 
     // Responsive width for better layouts
     val isViewWide = DeviceUtils.isViewWide(currentWindowAdaptiveInfo())
@@ -224,17 +240,26 @@ internal fun LibraryListPane(
             Box(
                 modifier = Modifier.fillMaxSize(),
             ) {
-                LazyVerticalGrid(
-                    columns = columnType,
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(
-                        start = 20.dp,
-                        end = 20.dp,
-                        bottom = 72.dp
-                    ),
+                val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
+
+                SwipeRefresh(
+                    state = swipeRefreshState,
+                    onRefresh = {
+                        isRefreshing = true
+                        onRefresh()
+                    }
                 ) {
+                    LazyVerticalGrid(
+                        columns = columnType,
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(
+                            start = 20.dp,
+                            end = 20.dp,
+                            bottom = 72.dp
+                        ),
+                    ) {
                     items(items = state.appInfoList, key = { it.index }) { item ->
                         if (item.index > 0 && paneType == PaneType.LIST) {
                             // Dividers in list view
@@ -259,6 +284,7 @@ internal fun LibraryListPane(
                             }
                         }
                     }
+                }
                 }
 
                 // Filter FAB - always show
@@ -345,6 +371,7 @@ private fun Preview_LibraryListPane() {
                 onLogout = { },
                 onNavigate = { },
                 onGoOnline = { },
+                onRefresh = { },
             )
         }
     }
