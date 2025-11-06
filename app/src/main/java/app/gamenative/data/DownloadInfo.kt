@@ -53,4 +53,16 @@ data class DownloadInfo(
             listener(getProgress())
         }
     }
+
+    fun isJobActive(): Boolean {
+        return downloadJob?.isActive == true
+    }
+
+    fun isJobCancelled(): Boolean {
+        return downloadJob?.isCancelled == true
+    }
+
+    fun isJobCompleted(): Boolean {
+        return downloadJob?.isCompleted == true
+    }
 }

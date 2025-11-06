@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -77,6 +80,74 @@ internal fun AppItem(
     LaunchedEffect(paneType) {
         hideText = true
         alpha = 1f
+    }
+
+    // Track download progress for overlay in Capsule/Hero views
+    val downloadInfo = remember(appInfo.appId) { SteamService.getAppDownloadInfo(appInfo.gameId) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var isJobActive by remember { mutableStateOf(false) }
+    var isJobCancelled by remember { mutableStateOf(false) }
+    var isJobCompleted by remember { mutableStateOf(false) }
+    val hasPartialDownload = remember(appInfo.appId) { SteamService.hasPartialDownload(appInfo.gameId) }
+    
+    // Determine download status
+    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload) {
+        when {
+            downloadInfo == null -> {
+                // If there's a partial download but no active download info, it's paused
+                if (hasPartialDownload) {
+                    "Paused"
+                } else {
+                    null
+                }
+            }
+            downloadProgress >= 1f -> "Completed"
+            isJobCancelled || (!isJobActive && !isJobCompleted && downloadProgress > 0f && downloadProgress < 1f) -> "Paused"
+            downloadProgress == 0f && !isJobActive -> "Queued"
+            downloadProgress > 0f && isJobActive -> "Downloading"
+            else -> "Queued" // Default to queued if progress is 0
+        }
+    }
+    
+    // Show overlay for downloading, paused, or queued states
+    val showDownloadOverlay = downloadStatus != null && downloadStatus != "Completed"
+
+    // Function to refresh progress from downloadInfo
+    val refreshProgress: () -> Unit = {
+        downloadProgress = downloadInfo?.getProgress() ?: 0f
+        isJobActive = downloadInfo?.isJobActive() ?: false
+        isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+        isJobCompleted = downloadInfo?.isJobCompleted() ?: false
+    }
+
+    // Initialize progress when component is created or downloadInfo changes
+    remember(downloadInfo) {
+        refreshProgress()
+    }
+
+    // Refresh progress when list reloads or when downloadInfo changes
+    LaunchedEffect(appInfo.appId, downloadInfo, listRefreshTrigger) {
+        refreshProgress()
+        // Also check for paused state even if downloadInfo is null
+        if (downloadInfo == null && hasPartialDownload) {
+            // Try to get download info again in case it exists
+            val currentDownloadInfo = SteamService.getAppDownloadInfo(appInfo.gameId)
+            if (currentDownloadInfo != null) {
+                refreshProgress()
+            }
+        }
+    }
+
+    // Listen to real-time progress updates via listener
+    DisposableEffect(downloadInfo) {
+        val onDownloadProgress: (Float) -> Unit = { progress ->
+            downloadProgress = progress
+        }
+        downloadInfo?.addProgressListener(onDownloadProgress)
+
+        onDispose {
+            downloadInfo?.removeProgressListener(onDownloadProgress)
+        }
     }
 
     // True when selected, e.g. with controller
@@ -154,15 +225,61 @@ internal fun AppItem(
                         "https://shared.steamstatic.com/store_item_assets/steam/apps/" + appInfo.gameId + "/header.jpg"
                     }
 
-                    ListItemImage(
-                        modifier = Modifier.aspectRatio(aspectRatio),
-                        imageModifier = Modifier.clip(RoundedCornerShape(3.dp)).alpha(alpha),
-                        image = { imageUrl },
-                        onFailure = {
-                            hideText = false
-                            alpha = 0.1f
+                    Box(modifier = Modifier.aspectRatio(aspectRatio)) {
+                        ListItemImage(
+                            modifier = Modifier.fillMaxSize(),
+                            imageModifier = Modifier.clip(RoundedCornerShape(3.dp)).alpha(alpha),
+                            image = { imageUrl },
+                            onFailure = {
+                                hideText = false
+                                alpha = 0.1f
+                            }
+                        )
+
+                        // Download progress overlay for Capsule/Hero views
+                        if (showDownloadOverlay && paneType != PaneType.LIST) {
+                            // Calculate overlay height: full height for queued/paused, otherwise based on progress
+                            val overlayHeight = when (downloadStatus) {
+                                "Queued", "Paused" -> 1f
+                                else -> 1f - downloadProgress
+                            }
+                            
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(overlayHeight)
+                                    .align(Alignment.TopStart)
+                                    .background(
+                                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.8f),
+                                        shape = RoundedCornerShape(3.dp) // Match image rounded corners
+                                    )
+                            )
+                            
+                            // Show download status or percentage
+                            val statusText = when (downloadStatus) {
+                                "Queued" -> "Queued"
+                                "Paused" -> "Paused"
+                                "Downloading" -> "${(downloadProgress * 100).toInt()}%"
+                                else -> "${(downloadProgress * 100).toInt()}%"
+                            }
+                            
+                            Text(
+                                text = statusText,
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(8.dp),
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    shadow = androidx.compose.ui.graphics.Shadow(
+                                        color = androidx.compose.ui.graphics.Color.Black,
+                                        offset = androidx.compose.ui.geometry.Offset(0f, 0f),
+                                        blurRadius = 4f
+                                    )
+                                ),
+                                color = androidx.compose.ui.graphics.Color.White,
+                            )
                         }
-                    )
+                    }
 
                     // Only display text if the image loading has failed
                     if (! hideText) {
@@ -240,14 +357,39 @@ internal fun GameInfoBlock(
     // Determine download and install state
     val downloadInfo = remember(appInfo.appId) { SteamService.getAppDownloadInfo(appInfo.gameId) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
-    val isDownloading = downloadInfo != null && downloadProgress < 1f
+    var isJobActive by remember { mutableStateOf(false) }
+    var isJobCancelled by remember { mutableStateOf(false) }
+    var isJobCompleted by remember { mutableStateOf(false) }
+    val hasPartialDownload = remember(appInfo.appId) { SteamService.hasPartialDownload(appInfo.gameId) }
     val isInstalled = remember(appInfo.appId) {
         SteamService.isAppInstalled(appInfo.gameId)
+    }
+    
+    // Determine download status
+    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload) {
+        when {
+            downloadInfo == null -> {
+                // If there's a partial download but no active download info, it's paused
+                if (hasPartialDownload) {
+                    "Paused"
+                } else {
+                    null
+                }
+            }
+            downloadProgress >= 1f -> "Completed"
+            isJobCancelled || (!isJobActive && !isJobCompleted && downloadProgress > 0f && downloadProgress < 1f) -> "Paused"
+            downloadProgress == 0f && !isJobActive -> "Queued"
+            downloadProgress > 0f && isJobActive -> "Downloading"
+            else -> "Queued" // Default to queued if progress is 0
+        }
     }
 
     // Function to refresh progress from downloadInfo - can be called from remember and LaunchedEffect
     val refreshProgress: () -> Unit = {
         downloadProgress = downloadInfo?.getProgress() ?: 0f
+        isJobActive = downloadInfo?.isJobActive() ?: false
+        isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+        isJobCompleted = downloadInfo?.isJobCompleted() ?: false
     }
 
     // Initialize progress when component is created or downloadInfo changes
@@ -257,8 +399,14 @@ internal fun GameInfoBlock(
 
     // Refresh progress when list reloads (for downloading games) or when downloadInfo changes
     LaunchedEffect(appInfo.appId, downloadInfo, listRefreshTrigger) {
-        if (downloadInfo != null) {
-            refreshProgress()
+        refreshProgress()
+        // Also check for paused state even if downloadInfo is null
+        if (downloadInfo == null && hasPartialDownload) {
+            // Try to get download info again in case it exists
+            val currentDownloadInfo = SteamService.getAppDownloadInfo(appInfo.gameId)
+            if (currentDownloadInfo != null) {
+                refreshProgress()
+            }
         }
     }
 
@@ -303,12 +451,18 @@ internal fun GameInfoBlock(
         ) {
             // Status indicator: Installing / Installed / Not installed
             val statusText = when {
-                isDownloading -> "Installing"
+                downloadStatus != null -> when (downloadStatus) {
+                    "Queued" -> "Queued"
+                    "Paused" -> "Paused"
+                    "Downloading" -> "Installing ${(downloadProgress * 100).toInt()}%"
+                    "Completed" -> "Installed"
+                    else -> "Installing ${(downloadProgress * 100).toInt()}%"
+                }
                 isInstalled -> "Installed"
                 else -> "Not installed"
             }
             val statusColor = when {
-                isDownloading || isInstalled -> MaterialTheme.colorScheme.tertiary
+                downloadStatus != null || isInstalled -> MaterialTheme.colorScheme.tertiary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
             }
             Row(
@@ -327,8 +481,8 @@ internal fun GameInfoBlock(
                     style = MaterialTheme.typography.bodyMedium,
                     color = statusColor
                 )
-                // Download percentage when installing
-                if (isDownloading) {
+                // Download percentage when downloading (not paused or queued)
+                if (downloadStatus == "Downloading") {
                     Text(
                         text = "${(downloadProgress * 100).toInt()}%",
                         style = MaterialTheme.typography.bodyMedium,

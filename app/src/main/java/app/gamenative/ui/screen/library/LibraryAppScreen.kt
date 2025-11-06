@@ -192,6 +192,15 @@ fun AppScreen(
     var downloadProgress by remember(appId) {
         mutableFloatStateOf(downloadInfo?.getProgress() ?: 0f)
     }
+    var isJobActive by remember(appId) {
+        mutableStateOf(downloadInfo?.isJobActive() ?: false)
+    }
+    var isJobCancelled by remember(appId) {
+        mutableStateOf(downloadInfo?.isJobCancelled() ?: false)
+    }
+    val hasPartialDownload = remember(appId) {
+        SteamService.hasPartialDownload(gameId)
+    }
     var isInstalled by remember(appId) {
         mutableStateOf(SteamService.isAppInstalled(gameId))
     }
@@ -200,7 +209,9 @@ fun AppScreen(
         mutableStateOf(appInfo.branches.isNotEmpty() && appInfo.depots.isNotEmpty())
     }
 
-    val isDownloading: () -> Boolean = { downloadInfo != null && downloadProgress < 1f }
+    val isDownloading: () -> Boolean = { 
+        downloadInfo != null && downloadProgress < 1f && isJobActive
+    }
 
     var loadingDialogVisible by rememberSaveable { mutableStateOf(false) }
     var loadingProgress by rememberSaveable { mutableFloatStateOf(0f) }
@@ -230,6 +241,15 @@ fun AppScreen(
         showConfigDialog = true
     }
 
+    // Refresh download info and job state when appId changes or when coming back to screen
+    LaunchedEffect(appId) {
+        Timber.d("Selected app $appId")
+        downloadInfo = SteamService.getAppDownloadInfo(gameId)
+        downloadProgress = downloadInfo?.getProgress() ?: 0f
+        isJobActive = downloadInfo?.isJobActive() ?: false
+        isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+    }
+
     DisposableEffect(downloadInfo) {
         val onDownloadProgress: (Float) -> Unit = {
             if (it >= 1f) {
@@ -239,6 +259,9 @@ fun AppScreen(
                 MarkerUtils.addMarker(getAppDirPath(gameId), Marker.DOWNLOAD_COMPLETE_MARKER)
             }
             downloadProgress = it
+            // Update job state when progress changes
+            isJobActive = downloadInfo?.isJobActive() ?: false
+            isJobCancelled = downloadInfo?.isJobCancelled() ?: false
         }
 
         downloadInfo?.addProgressListener(onDownloadProgress)
@@ -246,10 +269,6 @@ fun AppScreen(
         onDispose {
             downloadInfo?.removeProgressListener(onDownloadProgress)
         }
-    }
-
-    LaunchedEffect(appId) {
-        Timber.d("Selected app $appId")
     }
 
     val oldGamesDirectory by remember {
@@ -616,9 +635,17 @@ fun AppScreen(
             onPauseResumeClick = {
                 if (isDownloading()) {
                     downloadInfo?.cancel()
-                    downloadInfo = null
+                    // Don't set downloadInfo to null - keep it so we can detect paused state
+                    // Update job state immediately
+                    isJobActive = false
+                    isJobCancelled = true
                 } else {
-                    downloadInfo = SteamService.downloadApp(gameId)
+                    // Resume download
+                    CoroutineScope(Dispatchers.IO).launch {
+                        downloadInfo = SteamService.downloadApp(gameId)
+                        isJobActive = downloadInfo?.isJobActive() ?: false
+                        isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+                    }
                 }
             },
             onDeleteDownloadClick = {
