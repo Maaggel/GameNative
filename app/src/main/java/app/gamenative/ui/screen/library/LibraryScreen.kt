@@ -97,8 +97,20 @@ private fun LibraryScreenContent(
     isOffline: Boolean = false,
 ) {
     var selectedAppId by remember { mutableStateOf<String?>(null) }
+    var previousSelectedAppId by remember { mutableStateOf<String?>(null) }
 
     BackHandler(selectedAppId != null) { selectedAppId = null }
+    
+    // Refresh list when navigating back from detail screen
+    LaunchedEffect(selectedAppId) {
+        // Only refresh if we're transitioning from detail view (non-null) back to list (null)
+        if (previousSelectedAppId != null && selectedAppId == null) {
+            // User navigated back to list, refresh to update any changes
+            onRefresh()
+        }
+        previousSelectedAppId = selectedAppId
+    }
+    
     val safePaddingModifier =
         if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT)
             Modifier.displayCutoutPadding()

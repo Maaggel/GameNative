@@ -90,22 +90,23 @@ internal fun AppItem(
     var isJobCompleted by remember { mutableStateOf(false) }
     val hasPartialDownload = remember(appInfo.appId) { SteamService.hasPartialDownload(appInfo.gameId) }
     
+    // Determine if download is active (same logic as detail screen)
+    val isDownloading = downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
+    // Determine if there's a partial download (same logic as detail screen for Resume button)
+    val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || hasPartialDownload
+    // Determine if validating (job is active but progress is very small/zero and we have partial download)
+    // This happens when resuming - validation occurs before progress updates
+    val isValidating = downloadInfo != null && isJobActive && downloadProgress <= 0.01f && hasPartialDownload
+    
     // Determine download status
-    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload) {
+    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload, isDownloading, isPartiallyDownloaded, isValidating) {
         when {
-            downloadInfo == null -> {
-                // If there's a partial download but no active download info, it's paused
-                if (hasPartialDownload) {
-                    "Paused"
-                } else {
-                    null
-                }
-            }
             downloadProgress >= 1f -> "Completed"
-            isJobCancelled || (!isJobActive && !isJobCompleted && downloadProgress > 0f && downloadProgress < 1f) -> "Paused"
-            downloadProgress == 0f && !isJobActive -> "Queued"
-            downloadProgress > 0f && isJobActive -> "Downloading"
-            else -> "Queued" // Default to queued if progress is 0
+            isValidating -> "Validating" // Job is active but progress is 0 and we're resuming
+            isDownloading -> "Downloading"
+            isPartiallyDownloaded -> "Paused" // If partially downloaded but not actively downloading, it's paused
+            downloadInfo != null && downloadProgress == 0f && !isJobActive -> "Queued"
+            else -> null // No download activity
         }
     }
     
@@ -140,8 +141,20 @@ internal fun AppItem(
 
     // Listen to real-time progress updates via listener
     DisposableEffect(downloadInfo) {
+        // Update state immediately when downloadInfo changes
+        downloadInfo?.let {
+            downloadProgress = it.getProgress()
+            isJobActive = it.isJobActive()
+            isJobCancelled = it.isJobCancelled()
+            isJobCompleted = it.isJobCompleted()
+        }
+
         val onDownloadProgress: (Float) -> Unit = { progress ->
             downloadProgress = progress
+            // Update job state when progress changes
+            isJobActive = downloadInfo?.isJobActive() ?: false
+            isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+            isJobCompleted = downloadInfo?.isJobCompleted() ?: false
         }
         downloadInfo?.addProgressListener(onDownloadProgress)
 
@@ -238,9 +251,9 @@ internal fun AppItem(
 
                         // Download progress overlay for Capsule/Hero views
                         if (showDownloadOverlay && paneType != PaneType.LIST) {
-                            // Calculate overlay height: full height for queued/paused, otherwise based on progress
+                            // Calculate overlay height: full height for queued/paused/validating, otherwise based on progress
                             val overlayHeight = when (downloadStatus) {
-                                "Queued", "Paused" -> 1f
+                                "Queued", "Paused", "Validating" -> 1f
                                 else -> 1f - downloadProgress
                             }
                             
@@ -259,8 +272,9 @@ internal fun AppItem(
                             val statusText = when (downloadStatus) {
                                 "Queued" -> "Queued"
                                 "Paused" -> "Paused"
-                                "Downloading" -> "${(downloadProgress * 100).toInt()}%"
-                                else -> "${(downloadProgress * 100).toInt()}%"
+                                "Validating" -> "Validating"
+                                "Downloading" -> String.format("%.1f%%", downloadProgress * 100)
+                                else -> String.format("%.1f%%", downloadProgress * 100)
                             }
                             
                             Text(
@@ -365,22 +379,23 @@ internal fun GameInfoBlock(
         SteamService.isAppInstalled(appInfo.gameId)
     }
     
+    // Determine if download is active (same logic as detail screen)
+    val isDownloading = downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
+    // Determine if there's a partial download (same logic as detail screen for Resume button)
+    val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || hasPartialDownload
+    // Determine if validating (job is active but progress is very small/zero and we have partial download)
+    // This happens when resuming - validation occurs before progress updates
+    val isValidating = downloadInfo != null && isJobActive && downloadProgress <= 0.01f && hasPartialDownload
+    
     // Determine download status
-    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload) {
+    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload, isDownloading, isPartiallyDownloaded, isValidating) {
         when {
-            downloadInfo == null -> {
-                // If there's a partial download but no active download info, it's paused
-                if (hasPartialDownload) {
-                    "Paused"
-                } else {
-                    null
-                }
-            }
             downloadProgress >= 1f -> "Completed"
-            isJobCancelled || (!isJobActive && !isJobCompleted && downloadProgress > 0f && downloadProgress < 1f) -> "Paused"
-            downloadProgress == 0f && !isJobActive -> "Queued"
-            downloadProgress > 0f && isJobActive -> "Downloading"
-            else -> "Queued" // Default to queued if progress is 0
+            isValidating -> "Validating" // Job is active but progress is 0 and we're resuming
+            isDownloading -> "Downloading"
+            isPartiallyDownloaded -> "Paused" // If partially downloaded but not actively downloading, it's paused
+            downloadInfo != null && downloadProgress == 0f && !isJobActive -> "Queued"
+            else -> null // No download activity
         }
     }
 
@@ -412,8 +427,20 @@ internal fun GameInfoBlock(
 
     // Listen to real-time progress updates via listener
     DisposableEffect(downloadInfo) {
+        // Update state immediately when downloadInfo changes
+        downloadInfo?.let {
+            downloadProgress = it.getProgress()
+            isJobActive = it.isJobActive()
+            isJobCancelled = it.isJobCancelled()
+            isJobCompleted = it.isJobCompleted()
+        }
+
         val onDownloadProgress: (Float) -> Unit = { progress ->
             downloadProgress = progress
+            // Update job state when progress changes
+            isJobActive = downloadInfo?.isJobActive() ?: false
+            isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+            isJobCompleted = downloadInfo?.isJobCompleted() ?: false
         }
         downloadInfo?.addProgressListener(onDownloadProgress)
 
@@ -454,9 +481,10 @@ internal fun GameInfoBlock(
                 downloadStatus != null -> when (downloadStatus) {
                     "Queued" -> "Queued"
                     "Paused" -> "Paused"
-                    "Downloading" -> "Installing ${(downloadProgress * 100).toInt()}%"
+                    "Validating" -> "Validating"
+                    "Downloading" -> "Installing ${String.format("%.1f%%", downloadProgress * 100)}"
                     "Completed" -> "Installed"
-                    else -> "Installing ${(downloadProgress * 100).toInt()}%"
+                    else -> "Installing ${String.format("%.1f%%", downloadProgress * 100)}"
                 }
                 isInstalled -> "Installed"
                 else -> "Not installed"
@@ -484,7 +512,7 @@ internal fun GameInfoBlock(
                 // Download percentage when downloading (not paused or queued)
                 if (downloadStatus == "Downloading") {
                     Text(
-                        text = "${(downloadProgress * 100).toInt()}%",
+                        text = String.format("%.1f%%", downloadProgress * 100),
                         style = MaterialTheme.typography.bodyMedium,
                         color = statusColor
                     )

@@ -704,6 +704,10 @@ class SteamService : Service(), IChallengeUrlChanged {
         }
 
         fun deleteApp(appId: Int): Boolean {
+            // Cancel and remove any active download
+            downloadJobs[appId]?.cancel()
+            downloadJobs.remove(appId)
+            
             // Remove any download-complete marker
             MarkerUtils.removeMarker(getAppDirPath(appId), Marker.DOWNLOAD_COMPLETE_MARKER)
             // Remove from DB
@@ -923,7 +927,8 @@ class SteamService : Service(), IChallengeUrlChanged {
                                     val MIN_INTERVAL_MS = 1000L
                                     var lastEmit = 0L
                                     Timber.i("Downloading game to " + defaultAppInstallPath)
-                                    success = retry(times = 3, backoffMs = 2_000) {
+                                    // Increase retry attempts for downloads and use longer backoff for timeouts
+                                    success = retry(times = 5, backoffMs = 3_000) {
                                         ContentDownloader(instance!!.steamClient!!)
                                             .downloadApp(
                                                 appId         = appId,
@@ -994,10 +999,30 @@ class SteamService : Service(), IChallengeUrlChanged {
             block: suspend () -> Boolean,
         ): Boolean {
             repeat(times - 1) { attempt ->
-                if (block()) return true
+                try {
+                    if (block()) return true
+                    // Block returned false, retry
+                    Timber.w("Download attempt ${attempt + 1}/$times returned false, retrying")
+                } catch (e: java.net.SocketTimeoutException) {
+                    // For timeout errors, use longer backoff with exponential increase
+                    val timeoutBackoff = if (backoffMs > 0) backoffMs * (attempt + 1) * 2 else 5_000L * (attempt + 1)
+                    Timber.w("Download timeout (attempt ${attempt + 1}/$times), retrying in ${timeoutBackoff}ms")
+                    delay(timeoutBackoff)
+                    return@repeat
+                } catch (e: Exception) {
+                    Timber.w("Download error (attempt ${attempt + 1}/$times): ${e.message}")
+                    if (backoffMs > 0) delay(backoffMs * (attempt + 1))
+                    return@repeat
+                }
                 if (backoffMs > 0) delay(backoffMs * (attempt + 1))
             }
-            return block()
+            // Final attempt
+            return try {
+                block()
+            } catch (e: Exception) {
+                Timber.e(e, "Download failed after $times attempts")
+                false
+            }
         }
 
 
