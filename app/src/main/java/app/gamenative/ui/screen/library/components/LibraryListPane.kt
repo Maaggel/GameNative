@@ -93,13 +93,36 @@ internal fun LibraryListPane(
     val snackBarHost = remember { SnackbarHostState() }
     val installedCount = remember { DownloadService.getDownloadDirectoryApps().count() }
     var isRefreshing by remember { mutableStateOf(false) }
+    val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
 
-    // Reset refreshing state when the list updates (indicating refresh is complete)
+    // Track the state snapshot when refresh starts
+    var refreshStartState by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
+    // Reset refreshing state when the list updates after a refresh
     LaunchedEffect(state.appInfoList.size, state.totalAppsInFilter) {
+        if (isRefreshing && refreshStartState != null) {
+            val (startSize, startTotal) = refreshStartState!!
+            // Check if state has changed since refresh started
+            val hasChanged = state.appInfoList.size != startSize || 
+                           state.totalAppsInFilter != startTotal
+            
+            if (hasChanged) {
+                // State updated, refresh is complete
+                delay(200) // Small delay for smooth UI transition
+                isRefreshing = false
+                refreshStartState = null
+            }
+        }
+    }
+    
+    // Fallback: if refresh takes too long, turn it off anyway
+    LaunchedEffect(isRefreshing) {
         if (isRefreshing) {
-            // Small delay to ensure UI updates smoothly
-            delay(300)
-            isRefreshing = false
+            delay(2000) // Max 2 seconds
+            if (isRefreshing) {
+                isRefreshing = false
+                refreshStartState = null
+            }
         }
     }
 
@@ -240,12 +263,11 @@ internal fun LibraryListPane(
             Box(
                 modifier = Modifier.fillMaxSize(),
             ) {
-                val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
-
                 SwipeRefresh(
                     state = swipeRefreshState,
                     onRefresh = {
                         isRefreshing = true
+                        refreshStartState = Pair(state.appInfoList.size, state.totalAppsInFilter)
                         onRefresh()
                     }
                 ) {
