@@ -292,6 +292,7 @@ internal fun LibraryListPane(
                             onClick = { onNavigate(item.appId) },
                             paneType = paneType,
                             onFocus = { targetOfScroll = item.index },
+                            listRefreshTrigger = state.appInfoList.size, // Changes when list refreshes
                         )
                     }
                     if (state.appInfoList.size < state.totalAppsInFilter) {

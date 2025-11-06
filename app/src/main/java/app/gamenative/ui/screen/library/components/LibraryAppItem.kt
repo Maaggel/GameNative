@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -68,6 +69,7 @@ internal fun AppItem(
     onClick: () -> Unit,
     paneType: PaneType = PaneType.LIST,
     onFocus: () -> Unit = {},
+    listRefreshTrigger: Int = 0, // Trigger that changes when list refreshes
 ) {
     var hideText by remember { mutableStateOf(true) }
     var alpha by remember { mutableFloatStateOf(1f) }
@@ -169,6 +171,7 @@ internal fun AppItem(
                                 .align(Alignment.BottomStart)
                                 .padding(8.dp),
                             appInfo = appInfo,
+                            listRefreshTrigger = listRefreshTrigger,
                         )
                     } else {
                         val isInstalled = remember(appInfo.appId) {
@@ -202,6 +205,7 @@ internal fun AppItem(
                 GameInfoBlock(
                     modifier = Modifier.weight(1f),
                     appInfo = appInfo,
+                    listRefreshTrigger = listRefreshTrigger,
                 )
 
                 // Play/Open button
@@ -229,15 +233,45 @@ internal fun AppItem(
 internal fun GameInfoBlock(
     modifier: Modifier,
     appInfo: LibraryItem,
+    listRefreshTrigger: Int = 0, // Trigger that changes when list refreshes
 ) {
     // For text displayed in list view, or as override if image loading fails
 
     // Determine download and install state
     val downloadInfo = remember(appInfo.appId) { SteamService.getAppDownloadInfo(appInfo.gameId) }
-    val downloadProgress = remember(downloadInfo) { downloadInfo?.getProgress() ?: 0f }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
     val isDownloading = downloadInfo != null && downloadProgress < 1f
     val isInstalled = remember(appInfo.appId) {
         SteamService.isAppInstalled(appInfo.gameId)
+    }
+
+    // Function to refresh progress from downloadInfo - can be called from remember and LaunchedEffect
+    val refreshProgress: () -> Unit = {
+        downloadProgress = downloadInfo?.getProgress() ?: 0f
+    }
+
+    // Initialize progress when component is created or downloadInfo changes
+    remember(downloadInfo) {
+        refreshProgress()
+    }
+
+    // Refresh progress when list reloads (for downloading games) or when downloadInfo changes
+    LaunchedEffect(appInfo.appId, downloadInfo, listRefreshTrigger) {
+        if (downloadInfo != null) {
+            refreshProgress()
+        }
+    }
+
+    // Listen to real-time progress updates via listener
+    DisposableEffect(downloadInfo) {
+        val onDownloadProgress: (Float) -> Unit = { progress ->
+            downloadProgress = progress
+        }
+        downloadInfo?.addProgressListener(onDownloadProgress)
+
+        onDispose {
+            downloadInfo?.removeProgressListener(onDownloadProgress)
+        }
     }
 
     var appSizeOnDisk by remember { mutableStateOf("") }
