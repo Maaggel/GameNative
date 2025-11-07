@@ -192,6 +192,15 @@ fun AppScreen(
     var downloadProgress by remember(appId) {
         mutableFloatStateOf(downloadInfo?.getProgress() ?: 0f)
     }
+    var isJobActive by remember(appId) {
+        mutableStateOf(downloadInfo?.isJobActive() ?: false)
+    }
+    var justResumed by remember(appId) {
+        mutableStateOf(false)
+    }
+    val hasPartialDownload = remember(appId) {
+        SteamService.hasPartialDownload(gameId)
+    }
     var isInstalled by remember(appId) {
         mutableStateOf(SteamService.isAppInstalled(gameId))
     }
@@ -200,7 +209,20 @@ fun AppScreen(
         mutableStateOf(appInfo.branches.isNotEmpty() && appInfo.depots.isNotEmpty())
     }
 
-    val isDownloading: () -> Boolean = { downloadInfo != null && downloadProgress < 1f }
+    val isDownloading: () -> Boolean = {
+        downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
+    }
+
+    // Determine if validating (job is active but progress is very small/zero and we have partial download)
+    // This happens when resuming - validation occurs before progress updates
+    val isValidating: () -> Boolean = {
+        downloadInfo != null && isJobActive && downloadProgress <= 0.01f && (hasPartialDownload || justResumed)
+    }
+
+    // Determine if starting a new download (job is active but progress is 0 and no partial download exists)
+    val isStartingDownload: () -> Boolean = {
+        downloadInfo != null && isJobActive && downloadProgress <= 0.01f && !hasPartialDownload
+    }
 
     var loadingDialogVisible by rememberSaveable { mutableStateOf(false) }
     var loadingProgress by rememberSaveable { mutableFloatStateOf(0f) }
@@ -230,6 +252,14 @@ fun AppScreen(
         showConfigDialog = true
     }
 
+    // Refresh download info and job state when appId changes or when coming back to screen
+    LaunchedEffect(appId) {
+        Timber.d("Selected app $appId")
+        downloadInfo = SteamService.getAppDownloadInfo(gameId)
+        downloadProgress = downloadInfo?.getProgress() ?: 0f
+        isJobActive = downloadInfo?.isJobActive() ?: false
+    }
+
     DisposableEffect(downloadInfo) {
         val onDownloadProgress: (Float) -> Unit = {
             if (it >= 1f) {
@@ -237,8 +267,39 @@ fun AppScreen(
                 downloadInfo = null
                 isInstalled = true
                 MarkerUtils.addMarker(getAppDirPath(gameId), Marker.DOWNLOAD_COMPLETE_MARKER)
+                justResumed = false
             }
-            downloadProgress = it
+
+            // If we just resumed and progress is still low, keep it at 0 to show validating
+            if (justResumed && it <= 0.01f) {
+                downloadProgress = 0f
+            } else {
+                downloadProgress = it
+
+                // Once progress increases, validation is done
+                if (justResumed && it > 0.01f) {
+                    justResumed = false
+                }
+            }
+
+            // Update job state when progress changes
+            isJobActive = downloadInfo?.isJobActive() ?: false
+        }
+
+        // Update state immediately when downloadInfo changes
+        downloadInfo?.let {
+            val currentProgress = it.getProgress()
+            // If we just resumed and progress is still low, keep it at 0 to show validating
+            if (justResumed && currentProgress <= 0.01f) {
+                downloadProgress = 0f
+            } else {
+                downloadProgress = currentProgress
+                // Once progress increases, validation is done
+                if (justResumed && currentProgress > 0.01f) {
+                    justResumed = false
+                }
+            }
+            isJobActive = it.isJobActive()
         }
 
         downloadInfo?.addProgressListener(onDownloadProgress)
@@ -246,10 +307,6 @@ fun AppScreen(
         onDispose {
             downloadInfo?.removeProgressListener(onDownloadProgress)
         }
-    }
-
-    LaunchedEffect(appId) {
-        Timber.d("Selected app $appId")
     }
 
     val oldGamesDirectory by remember {
@@ -356,8 +413,7 @@ fun AppScreen(
                         visible = true,
                         type = DialogType.NOT_ENOUGH_SPACE,
                         title = context.getString(R.string.not_enough_space),
-                        message = "The app being installed needs $installSize of space but " +
-                                "there is only $availableSpace left on this device",
+                        message = context.getString(R.string.not_enough_space_message, installSize, availableSpace),
                         confirmBtnText = context.getString(R.string.acknowledge),
                     )
                 } else {
@@ -365,17 +421,14 @@ fun AppScreen(
                         visible = true,
                         type = DialogType.INSTALL_APP,
                         title = context.getString(R.string.download_prompt_title),
-                        message = "The app being installed has the following space requirements. Would you like to proceed?" +
-                                "\n\n\tDownload Size: $downloadSize" +
-                                "\n\tSize on Disk: $installSize" +
-                                "\n\tAvailable Space: $availableSpace",
+                        message = context.getString(R.string.install_space_requirements, downloadSize, installSize, availableSpace),
                         confirmBtnText = context.getString(R.string.proceed),
                         dismissBtnText = context.getString(R.string.cancel),
                     )
                 }
             } else {
                 // Snack bar this?
-                Toast.makeText(context, "Storage permission required", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.storage_permission_required), Toast.LENGTH_SHORT).show()
             }
         },
     )
@@ -392,12 +445,12 @@ fun AppScreen(
                         outputStream.write(content.toByteArray(Charsets.UTF_8))
                         outputStream.flush()
                     }
-                    Toast.makeText(context, "Exported", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.exported), Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(context, "Failed to export: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, context.getString(R.string.export_failed, e.message ?: ""), Toast.LENGTH_LONG).show()
                 }
             } else {
-                Toast.makeText(context, "Export cancelled", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.export_cancelled), Toast.LENGTH_SHORT).show()
             }
         },
     )
@@ -529,10 +582,10 @@ fun AppScreen(
     if (showCreateShortcutDialog) {
         AlertDialog(
             onDismissRequest = { showCreateShortcutDialog = false },
-            title = { Text("Create shortcut") },
+            title = { Text(stringResource(R.string.create_shortcut)) },
             text = {
                 Column {
-                    Text(text = "Label")
+                    Text(text = stringResource(R.string.label))
                     TextField(
                         value = shortcutLabel,
                         onValueChange = { shortcutLabel = it },
@@ -540,11 +593,11 @@ fun AppScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = "Icon")
+                        Text(text = stringResource(R.string.icon))
                         Spacer(Modifier.width(12.dp))
                         CoilImage(
                             imageModel = { appInfo.iconUrl },
-                            imageOptions = ImageOptions(contentDescription = "Game icon"),
+                            imageOptions = ImageOptions(contentDescription = stringResource(R.string.game_icon)),
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -556,19 +609,19 @@ fun AppScreen(
                         try {
                             createPinnedShortcut(context.applicationContext, gameId, shortcutLabel, appInfo.iconUrl)
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Shortcut created", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.shortcut_created), Toast.LENGTH_SHORT).show()
                             }
                         } catch (t: Throwable) {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "Failed to create shortcut: ${t.message}", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, context.getString(R.string.shortcut_failed, t.message ?: ""), Toast.LENGTH_LONG).show()
                             }
                         }
                         showCreateShortcutDialog = false
                     }
-                }) { Text("Create") }
+                }) { Text(stringResource(R.string.create)) }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showCreateShortcutDialog = false }) { Text("Cancel") }
+                OutlinedButton(onClick = { showCreateShortcutDialog = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -580,6 +633,8 @@ fun AppScreen(
             isInstalled = isInstalled,
             isValidToDownload = isValidToDownload,
             isDownloading = isDownloading(),
+            isValidating = isValidating(),
+            isStartingDownload = isStartingDownload(),
             downloadProgress = downloadProgress,
             onDownloadInstallClick = {
                 if (isDownloading()) {
@@ -588,7 +643,7 @@ fun AppScreen(
                         visible = true,
                         type = DialogType.CANCEL_APP_DOWNLOAD,
                         title = context.getString(R.string.cancel_download_prompt_title),
-                        message = "Are you sure you want to cancel the download of the app?",
+                        message = context.getString(R.string.cancel_download_message),
                         confirmBtnText = context.getString(R.string.yes),
                         dismissBtnText = context.getString(R.string.no),
                     )
@@ -616,9 +671,34 @@ fun AppScreen(
             onPauseResumeClick = {
                 if (isDownloading()) {
                     downloadInfo?.cancel()
-                    downloadInfo = null
+
+                    // Don't set downloadInfo to null - keep it so we can detect paused state
+                    // Update job state immediately
+                    isJobActive = false
+                    justResumed = false
                 } else {
-                    downloadInfo = SteamService.downloadApp(gameId)
+                    // Resume download - reset progress to 0 since validation starts from 0
+                    justResumed = true
+                    downloadProgress = 0f
+                    CoroutineScope(Dispatchers.IO).launch {
+                        downloadInfo = SteamService.downloadApp(gameId)
+
+                        // Update state immediately after getting new downloadInfo
+                        withContext(Dispatchers.Main) {
+                            isJobActive = downloadInfo?.isJobActive() ?: false
+
+                            // If progress is still 0 or very low, we're validating
+                            val currentProgress = downloadInfo?.getProgress() ?: 0f
+                            if (currentProgress <= 0.01f) {
+                                // Keep progress at 0 to show validating state
+                                downloadProgress = 0f
+                            } else {
+                                // Progress has increased, validation is done
+                                downloadProgress = currentProgress
+                                justResumed = false
+                            }
+                        }
+                    }
                 }
             },
             onDeleteDownloadClick = {
@@ -626,7 +706,7 @@ fun AppScreen(
                     visible = true,
                     type = DialogType.CANCEL_APP_DOWNLOAD,
                     title = context.getString(R.string.cancel_download_prompt_title),
-                    message = "Delete all downloaded data for this game?",
+                    message = context.getString(R.string.delete_download_data),
                     confirmBtnText = context.getString(R.string.yes),
                     dismissBtnText = context.getString(R.string.no)
                 )
@@ -644,23 +724,19 @@ fun AppScreen(
                                 msgDialogState = MessageDialogState(
                                     visible = true,
                                     type = DialogType.INSTALL_IMAGEFS,
-                                    title = "Download & Install ImageFS",
-                                    message = "The Ubuntu image needs to be downloaded and installed before " +
-                                        "being able to edit the configuration. This operation might take " +
-                                        "a few minutes. Would you like to continue?",
-                                    confirmBtnText = "Proceed",
-                                    dismissBtnText = "Cancel",
+                                    title = context.getString(R.string.download_install_imagefs),
+                                    message = context.getString(R.string.imagefs_download_message),
+                                    confirmBtnText = context.getString(R.string.proceed),
+                                    dismissBtnText = context.getString(R.string.cancel),
                                 )
                             } else {
                                 msgDialogState = MessageDialogState(
                                     visible = true,
                                     type = DialogType.INSTALL_IMAGEFS,
-                                    title = "Install ImageFS",
-                                    message = "The Ubuntu image needs to be installed before being able to edit " +
-                                        "the configuration. This operation might take a few minutes. " +
-                                        "Would you like to continue?",
-                                    confirmBtnText = "Proceed",
-                                    dismissBtnText = "Cancel",
+                                    title = context.getString(R.string.install_imagefs),
+                                    message = context.getString(R.string.imagefs_install_message),
+                                    confirmBtnText = context.getString(R.string.proceed),
+                                    dismissBtnText = context.getString(R.string.cancel),
                                 )
                             }
                         } else {
@@ -779,7 +855,7 @@ fun AppScreen(
                                         visible = true,
                                         type = DialogType.DELETE_APP,
                                         title = context.getString(R.string.delete_prompt_title),
-                                        message = "Are you sure you want to delete this app?",
+                                        message = context.getString(R.string.delete_app_message),
                                         confirmBtnText = context.getString(R.string.delete_app),
                                         dismissBtnText = context.getString(R.string.cancel),
                                     )
@@ -810,13 +886,13 @@ fun AppScreen(
                                         scope.launch(Dispatchers.Main) {
                                             when (syncResult.syncResult) {
                                                 SyncResult.Success -> {
-                                                    Toast.makeText(context, "Cloud sync completed successfully", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, context.getString(R.string.cloud_sync_success), Toast.LENGTH_SHORT).show()
                                                 }
                                                 SyncResult.UpToDate -> {
-                                                    Toast.makeText(context, "Save files are already up to date", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, context.getString(R.string.cloud_sync_uptodate), Toast.LENGTH_SHORT).show()
                                                 }
                                                 else -> {
-                                                    Toast.makeText(context, "Cloud sync failed: ${syncResult.syncResult}", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, context.getString(R.string.cloud_sync_failed, syncResult.syncResult.toString()), Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         }
@@ -858,6 +934,8 @@ private fun AppScreenContent(
     isInstalled: Boolean,
     isValidToDownload: Boolean,
     isDownloading: Boolean,
+    isValidating: Boolean,
+    isStartingDownload: Boolean,
     downloadProgress: Float,
     onDownloadInstallClick: () -> Unit,
     onPauseResumeClick: () -> Unit,
@@ -886,10 +964,10 @@ private fun AppScreenContent(
                 if (file.exists()) {
                     SteamUtils.fromSteamTime((file.lastModified() / 1000).toInt())
                 } else {
-                    "Never"
+                    stringResource(R.string.never)
                 }
             } else {
-                "Never"
+                stringResource(R.string.never)
             }
         )
     }
@@ -1067,16 +1145,17 @@ private fun AppScreenContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Pause/Resume and Delete when downloading or paused
+                // Pause/Resume/Starting and Delete/Cancel when downloading or paused
                 // Determine if there's a partial download (in-session or from ungraceful close)
                 val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || SteamService.hasPartialDownload(appInfo.id)
+
                 // Disable resume when Wi-Fi only is enabled and there's no Wi-Fi
-                val isResume = !isDownloading && isPartiallyDownloaded
+                val isResume = !isDownloading && isPartiallyDownloaded && !isValidating && !isStartingDownload
                 val pauseResumeEnabled = if (isResume) wifiAllowed else true
-                if (isDownloading || isPartiallyDownloaded) {
-                    // Pause or Resume
+                if (isDownloading || isPartiallyDownloaded || isValidating || isStartingDownload) {
+                    // Pause, Resume, Validating, or Starting download
                     Button(
-                        enabled = pauseResumeEnabled,
+                        enabled = pauseResumeEnabled && !isValidating && !isStartingDownload, // Disable during validation and starting
                         modifier = Modifier.weight(1f),
                         onClick = onPauseResumeClick,
                         shape = RoundedCornerShape(16.dp),
@@ -1084,12 +1163,16 @@ private fun AppScreenContent(
                         contentPadding = PaddingValues(16.dp)
                     ) {
                         Text(
-                            text = if (isDownloading) stringResource(R.string.pause_download)
-                                   else stringResource(R.string.resume_download),
+                            text = when {
+                                isStartingDownload -> stringResource(R.string.starting_download)
+                                isValidating -> stringResource(R.string.validating)
+                                isDownloading -> stringResource(R.string.pause_download)
+                                else -> stringResource(R.string.resume_download)
+                            },
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                         )
                     }
-                    // Delete (Cancel) download data
+                    // Cancel during starting, Delete otherwise
                     OutlinedButton(
                         modifier = Modifier.weight(1f),
                         onClick = onDeleteDownloadClick,
@@ -1098,7 +1181,10 @@ private fun AppScreenContent(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                         contentPadding = PaddingValues(16.dp)
                     ) {
-                        Text(stringResource(R.string.delete_app), style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            text = if (isStartingDownload) stringResource(R.string.cancel) else stringResource(R.string.delete_app),
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                        )
                     }
                 } else {
                     // Disable install when Wi-Fi only is enabled and there's no Wi-Fi
@@ -1119,8 +1205,8 @@ private fun AppScreenContent(
                     ) {
                         val text = when {
                             isInstalled -> stringResource(R.string.run_app)
-                            !hasInternet -> "Need internet to install"
-                            !wifiConnected && PrefManager.downloadOnWifiOnly -> "Install over WiFi only enabled"
+                            !hasInternet -> stringResource(R.string.need_internet_install)
+                            !wifiConnected && PrefManager.downloadOnWifiOnly -> stringResource(R.string.install_wifi_only)
                             else -> stringResource(R.string.install_app)
                         }
                         Text(
@@ -1158,7 +1244,7 @@ private fun AppScreenContent(
                         downloadStartTime = System.currentTimeMillis()
                     }
                 }
-                val timeLeftText = remember(downloadProgress, downloadStartTime) {
+                        val timeLeftText = remember(downloadProgress, downloadStartTime) {
                     if (downloadProgress in 0f..1f && downloadStartTime != null && downloadProgress < 1f) {
                         val elapsed = System.currentTimeMillis() - downloadStartTime!!
                         val totalEst = (elapsed / downloadProgress).toLong()
@@ -1166,9 +1252,9 @@ private fun AppScreenContent(
                         val secondsLeft = remaining / 1000
                         val minutesLeft = secondsLeft / 60
                         val secondsPart = secondsLeft % 60
-                        "${minutesLeft}m ${secondsPart}s left"
+                        stringResource(R.string.time_left, minutesLeft.toInt(), secondsPart.toInt())
                     } else {
-                        "Calculating..."
+                        stringResource(R.string.calculating)
                     }
                 }
                 Column(
@@ -1180,7 +1266,7 @@ private fun AppScreenContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Installation Progress",
+                            text = stringResource(R.string.installation_progress),
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
@@ -1210,7 +1296,7 @@ private fun AppScreenContent(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Downloading...",
+                            text = stringResource(R.string.downloading),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1258,7 +1344,7 @@ private fun AppScreenContent(
                                 Text("↑", color = MaterialTheme.colorScheme.onTertiary, fontSize = 14.sp)
                             }
                             Text(
-                                "Update Available",
+                                stringResource(R.string.update_available),
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.tertiary
                             )
@@ -1274,7 +1360,7 @@ private fun AppScreenContent(
                             ),
                             contentPadding = PaddingValues(12.dp)
                         ) {
-                            Text("Update Now", color = MaterialTheme.colorScheme.onTertiary)
+                            Text(stringResource(R.string.update_now), color = MaterialTheme.colorScheme.onTertiary)
                         }
                     }
                 }
@@ -1306,7 +1392,7 @@ private fun AppScreenContent(
 
                     Column(modifier = Modifier.padding(24.dp)) {
                         Text(
-                            text = "Game Information",
+                            text = stringResource(R.string.game_information),
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
@@ -1322,7 +1408,7 @@ private fun AppScreenContent(
                             item {
                                 Column {
                                     Text(
-                                        text = "Status",
+                                        text = stringResource(R.string.status),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1347,9 +1433,9 @@ private fun AppScreenContent(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(
                                                 text = when {
-                                                    isInstalled -> "Installed"
-                                                    isDownloading -> "Installing"
-                                                    else -> "Not Installed"
+                                                    isInstalled -> stringResource(R.string.installed)
+                                                    isDownloading -> stringResource(R.string.installing)
+                                                    else -> stringResource(R.string.not_installed)
                                                 },
                                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                                 color = MaterialTheme.colorScheme.tertiary
@@ -1363,7 +1449,7 @@ private fun AppScreenContent(
                             item {
                                 Column {
                                     Text(
-                                        text = "Size",
+                                        text = stringResource(R.string.size),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1394,7 +1480,7 @@ private fun AppScreenContent(
 
                                     Column {
                                         Text(
-                                            text = "Location",
+                                            text = stringResource(R.string.location),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -1419,7 +1505,7 @@ private fun AppScreenContent(
                             item {
                                 Column {
                                     Text(
-                                        text = "Developer",
+                                        text = stringResource(R.string.developer),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1435,7 +1521,7 @@ private fun AppScreenContent(
                             item {
                                 Column {
                                     Text(
-                                        text = "Release Date",
+                                        text = stringResource(R.string.release_date),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1469,7 +1555,7 @@ internal fun GameMigrationDialog(
             // We don't allow dismissal during move.
         },
         icon = { Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null) },
-        title = { Text(text = "Moving Files") },
+        title = { Text(text = stringResource(R.string.moving_files)) },
         text = {
             Column(
                 modifier = Modifier
@@ -1478,7 +1564,7 @@ internal fun GameMigrationDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "File ${movedFiles + 1} of $totalFiles",
+                    text = stringResource(R.string.file_progress, movedFiles + 1, totalFiles),
                     style = MaterialTheme.typography.bodyLarge,
                 )
 
@@ -1533,6 +1619,8 @@ private fun Preview_AppScreen() {
                 isInstalled = false,
                 isValidToDownload = true,
                 isDownloading = isDownloading,
+                isValidating = false,
+                isStartingDownload = false,
                 downloadProgress = .50f,
                 onDownloadInstallClick = { isDownloading = !isDownloading },
                 onPauseResumeClick = { },

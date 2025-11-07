@@ -131,4 +131,83 @@
     <string name="settings_restart_required_message">Changing this setting requires the app to restart. Do you want to continue?</string>
     <string name="settings_restart">Restart</string>
     <string name="settings_saving_and_restarting">Saving settings and restarting…</string>
+
+    <!-- Settings - Interface -->
+    <string name="settings_interface">Interface</string>
+    <string name="settings_open_web_links_externally">Open web links externally</string>
+    <string name="settings_open_web_links_externally_subtitle">Links open with your main web browser</string>
+    <string name="settings_icon_style">Icon style</string>
+    <string name="settings_icon_default">Default</string>
+    <string name="settings_icon_alternate">Alternate</string>
+
+    <!-- Settings - Downloads -->
+    <string name="settings_downloads">Downloads</string>
+    <string name="settings_download_wifi_only">Download only over Wi-Fi</string>
+    <string name="settings_download_wifi_only_subtitle">Prevent downloads on cellular data</string>
+    <string name="settings_write_external_storage">Write to external storage</string>
+    <string name="settings_no_external_storage">No external storage detected</string>
+    <string name="settings_save_games_external">Save games to external storage</string>
+    <string name="settings_storage_volume">Storage volume</string>
+    <string name="settings_steam_download_server">Steam Download Server</string>
+    <string name="settings_default">Default</string>
+
+    <!-- Library App Screen -->
+    <string name="storage_permission_required">Storage permission required</string>
+    <string name="not_enough_space_message">The app being installed needs %1$s of space but there is only %2$s left on this device</string>
+    <string name="install_space_requirements">The app being installed has the following space requirements. Would you like to proceed?\n\n\tDownload Size: %1$s\n\tSize on Disk: %2$s\n\tAvailable Space: %3$s</string>
+    <string name="exported">Exported</string>
+    <string name="export_failed">Failed to export: %1$s</string>
+    <string name="export_cancelled">Export cancelled</string>
+    <string name="create_shortcut">Create shortcut</string>
+    <string name="label">Label</string>
+    <string name="icon">Icon</string>
+    <string name="game_icon">Game icon</string>
+    <string name="shortcut_created">Shortcut created</string>
+    <string name="shortcut_failed">Failed to create shortcut: %1$s</string>
+    <string name="create">Create</string>
+    <string name="cancel_download_message">Are you sure you want to cancel the download of the app?</string>
+    <string name="delete_download_data">Delete all downloaded data for this game?</string>
+    <string name="download_install_imagefs">Download &amp; Install ImageFS</string>
+    <string name="imagefs_download_message">The Ubuntu image needs to be downloaded and installed before being able to edit the configuration. This operation might take a few minutes. Would you like to continue?</string>
+    <string name="install_imagefs">Install ImageFS</string>
+    <string name="imagefs_install_message">The Ubuntu image needs to be installed before being able to edit the configuration. This operation might take a few minutes. Would you like to continue?</string>
+    <string name="delete_app_message">Are you sure you want to delete this app?</string>
+    <string name="cloud_sync_success">Cloud sync completed successfully</string>
+    <string name="cloud_sync_uptodate">Save files are already up to date</string>
+    <string name="cloud_sync_failed">Cloud sync failed: %1$s</string>
+    <string name="starting_download">Starting download…</string>
+    <string name="validating">Validating…</string>
+    <string name="need_internet_install">Need internet to install</string>
+    <string name="install_wifi_only">Install over WiFi only enabled</string>
+    <string name="installation_progress">Installation Progress</string>
+    <string name="downloading">Downloading…</string>
+    <string name="calculating">Calculating…</string>
+    <string name="time_left">%1$dm %2$ds left</string>
+    <string name="update_available">Update Available</string>
+    <string name="update_now">Update Now</string>
+    <string name="game_information">Game Information</string>
+    <string name="status">Status</string>
+    <string name="installed">Installed</string>
+    <string name="installing">Installing</string>
+    <string name="not_installed">Not Installed</string>
+    <string name="size">Size</string>
+    <string name="location">Location</string>
+    <string name="developer">Developer</string>
+    <string name="release_date">Release Date</string>
+    <string name="moving_files">Moving Files</string>
+    <string name="file_progress">File %1$d of %2$d</string>
+    <string name="never">Never</string>
+
+    <!-- Library List Pane -->
+    <string name="filters">Filters</string>
+
+    <!-- Library App Item -->
+    <string name="open">Open</string>
+    <string name="completed">Completed</string>
+    <string name="queued">Queued</string>
+    <string name="paused">Paused</string>
+    <string name="downloading_status">Downloading</string>
+    <string name="installing_percent">Installing %1$.1f%%</string>
+    <string name="not_installed_status">Not installed</string>
+    <string name="family_shared">Family Shared</string>
 </resources>

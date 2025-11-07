@@ -97,11 +97,11 @@ fun SettingsGroupInterface(
         steamRegionsList.indexOfFirst { it.first == PrefManager.cellId }.takeIf { it >= 0 } ?: 0
     ) }
 
-    SettingsGroup(title = { Text(text = "Interface") }) {
+    SettingsGroup(title = { Text(text = stringResource(R.string.settings_interface)) }) {
         SettingsSwitch(
             colors = settingsTileColorsAlt(),
-            title = { Text(text = "Open web links externally") },
-            subtitle = { Text(text = "Links open with your main web browser") },
+            title = { Text(text = stringResource(R.string.settings_open_web_links_externally)) },
+            subtitle = { Text(text = stringResource(R.string.settings_open_web_links_externally_subtitle)) },
             state = openWebLinks,
             onCheckedChange = {
                 openWebLinks = it
@@ -127,11 +127,11 @@ fun SettingsGroupInterface(
         // Unified visual icon picker (affects app and notification icons)
         var selectedVariant by rememberSaveable { mutableStateOf(if (PrefManager.useAltLauncherIcon || PrefManager.useAltNotificationIcon) 1 else 0) }
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text(text = "Icon style")
+            Text(text = stringResource(R.string.settings_icon_style))
             Spacer(modifier = Modifier.size(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 IconVariantCard(
-                    label = "Default",
+                    label = stringResource(R.string.settings_icon_default),
                     launcherIconRes = R.mipmap.ic_launcher,
                     notificationIconRes = R.drawable.ic_notification,
                     selected = selectedVariant == 0,
@@ -143,7 +143,7 @@ fun SettingsGroupInterface(
                     },
                 )
                 IconVariantCard(
-                    label = "Alternate",
+                    label = stringResource(R.string.settings_icon_alternate),
                     launcherIconRes = R.mipmap.ic_launcher_alt,
                     notificationIconRes = R.drawable.ic_notification_alt,
                     selected = selectedVariant == 1,
@@ -159,12 +159,12 @@ fun SettingsGroupInterface(
     }
 
     // Downloads settings
-    SettingsGroup(title = { Text(text = "Downloads") }) {
+    SettingsGroup(title = { Text(text = stringResource(R.string.settings_downloads)) }) {
         var wifiOnlyDownload by rememberSaveable { mutableStateOf(PrefManager.downloadOnWifiOnly) }
         SettingsSwitch(
             colors = settingsTileColorsAlt(),
-            title = { Text(text = "Download only over Wi-Fi") },
-            subtitle = { Text(text = "Prevent downloads on cellular data") },
+            title = { Text(text = stringResource(R.string.settings_download_wifi_only)) },
+            subtitle = { Text(text = stringResource(R.string.settings_download_wifi_only_subtitle)) },
             state = wifiOnlyDownload,
             onCheckedChange = {
                 wifiOnlyDownload = it
@@ -192,12 +192,12 @@ fun SettingsGroupInterface(
         SettingsSwitch(
             colors = settingsTileColorsAlt(),
             enabled  = dirs.isNotEmpty(),
-            title = { Text(text = "Write to external storage") },
+            title = { Text(text = stringResource(R.string.settings_write_external_storage)) },
             subtitle = {
                 if (dirs.isEmpty())
-                    Text("No external storage detected")
+                    Text(stringResource(R.string.settings_no_external_storage))
                 else
-                    Text("Save games to external storage")
+                    Text(stringResource(R.string.settings_save_games_external))
             },
             state = useExternalStorage,
             onCheckedChange = {
@@ -217,7 +217,7 @@ fun SettingsGroupInterface(
                 )
             }
             SettingsListDropdown(
-                title = { Text(text = "Storage volume") },
+                title = { Text(text = stringResource(R.string.settings_storage_volume)) },
                 items = labels,
                 value = selectedIndex,
                 onItemSelected = { idx ->
@@ -230,8 +230,8 @@ fun SettingsGroupInterface(
         // Steam download server selection
         SettingsMenuLink(
             colors = settingsTileColorsAlt(),
-            title = { Text(text = "Steam Download Server") },
-            subtitle = { Text(text = steamRegionsList.getOrNull(selectedRegionIndex)?.second ?: "Default") },
+            title = { Text(text = stringResource(R.string.settings_steam_download_server)) },
+            subtitle = { Text(text = steamRegionsList.getOrNull(selectedRegionIndex)?.second ?: stringResource(R.string.settings_default)) },
             onClick = { openRegionDialog = true }
         )
     }
@@ -240,8 +240,8 @@ fun SettingsGroupInterface(
     SingleChoiceDialog(
         openDialog = openRegionDialog,
         icon = Icons.Default.Map,
-        iconDescription = "Steam Download Server",
-        title = "Steam Download Server",
+        iconDescription = stringResource(R.string.settings_steam_download_server),
+        title = stringResource(R.string.settings_steam_download_server),
         items = steamRegionsList.map { it.second },
         currentItem = selectedRegionIndex,
         onSelected = { index ->

@@ -37,9 +37,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import app.gamenative.R
 import app.gamenative.data.LibraryItem
 import app.gamenative.ui.data.LibraryState
 import app.gamenative.ui.enums.AppFilter
@@ -53,10 +55,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
 import app.gamenative.PrefManager
 import app.gamenative.utils.DeviceUtils
 import kotlinx.coroutines.flow.filterNotNull
@@ -81,11 +88,49 @@ internal fun LibraryListPane(
     onSearchQuery: (String) -> Unit,
     onNavigateRoute: (String) -> Unit,
     onGoOnline: () -> Unit,
+    onRefresh: () -> Unit,
     isOffline: Boolean = false,
 ) {
     val expandedFab by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
     val snackBarHost = remember { SnackbarHostState() }
     val installedCount = remember { DownloadService.getDownloadDirectoryApps().count() }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
+
+    // Track the state snapshot when refresh starts
+    var refreshStartState by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
+    // Reset refreshing state when the list updates after a refresh
+    LaunchedEffect(state.appInfoList.size, state.totalAppsInFilter) {
+        if (isRefreshing && refreshStartState != null) {
+            val (startSize, startTotal) = refreshStartState!!
+
+            // Check if state has changed since refresh started
+            val hasChanged = state.appInfoList.size != startSize ||
+                           state.totalAppsInFilter != startTotal
+
+            if (hasChanged) {
+                /** State updated, refresh is complete */
+
+                // Small delay for smooth UI transition
+                delay(200)
+
+                isRefreshing = false
+                refreshStartState = null
+            }
+        }
+    }
+
+    // Fallback: if refresh takes too long, turn it off anyway
+    LaunchedEffect(isRefreshing) {
+        if (isRefreshing) {
+            delay(2000) // Max 2 seconds
+            if (isRefreshing) {
+                isRefreshing = false
+                refreshStartState = null
+            }
+        }
+    }
 
     // Responsive width for better layouts
     val isViewWide = DeviceUtils.isViewWide(currentWindowAdaptiveInfo())
@@ -224,38 +269,48 @@ internal fun LibraryListPane(
             Box(
                 modifier = Modifier.fillMaxSize(),
             ) {
-                LazyVerticalGrid(
-                    columns = columnType,
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(
-                        start = 20.dp,
-                        end = 20.dp,
-                        bottom = 72.dp
-                    ),
-                ) {
-                    items(items = state.appInfoList, key = { it.index }) { item ->
-                        if (item.index > 0 && paneType == PaneType.LIST) {
-                            // Dividers in list view
-                            HorizontalDivider()
-                        }
-                        AppItem(
-                            appInfo = item,
-                            onClick = { onNavigate(item.appId) },
-                            paneType = paneType,
-                            onFocus = { targetOfScroll = item.index },
-                        )
+                SwipeRefresh(
+                    state = swipeRefreshState,
+                    onRefresh = {
+                        isRefreshing = true
+                        refreshStartState = Pair(state.appInfoList.size, state.totalAppsInFilter)
+                        onRefresh()
                     }
-                    if (state.appInfoList.size < state.totalAppsInFilter) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
+                ) {
+                    LazyVerticalGrid(
+                        columns = columnType,
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(
+                            start = 20.dp,
+                            end = 20.dp,
+                            bottom = 72.dp
+                        ),
+                    ) {
+                        items(items = state.appInfoList, key = { it.index }) { item ->
+                            if (item.index > 0 && paneType == PaneType.LIST) {
+                                // Dividers in list view
+                                HorizontalDivider()
+                            }
+                            AppItem(
+                                appInfo = item,
+                                onClick = { onNavigate(item.appId) },
+                                paneType = paneType,
+                                onFocus = { targetOfScroll = item.index },
+                                listRefreshTrigger = state.appInfoList.size, // Changes when list refreshes
+                            )
+                        }
+                        if (state.appInfoList.size < state.totalAppsInFilter) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator()
+                                }
                             }
                         }
                     }
@@ -264,7 +319,7 @@ internal fun LibraryListPane(
                 // Filter FAB - always show
                 if (!state.isSearching) {
                     ExtendedFloatingActionButton(
-                        text = { Text(text = "Filters") },
+                        text = { Text(text = stringResource(R.string.filters)) },
                         expanded = expandedFab,
                         icon = { Icon(imageVector = Icons.Default.FilterList, contentDescription = null) },
                         onClick = { onModalBottomSheet(true) },
@@ -345,6 +400,7 @@ private fun Preview_LibraryListPane() {
                 onLogout = { },
                 onNavigate = { },
                 onGoOnline = { },
+                onRefresh = { },
             )
         }
     }
