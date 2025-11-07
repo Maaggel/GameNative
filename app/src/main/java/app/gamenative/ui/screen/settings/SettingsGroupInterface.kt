@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import app.gamenative.ui.component.settings.SettingsListDropdown
 import app.gamenative.ui.theme.PluviaTheme
@@ -110,8 +111,8 @@ fun SettingsGroupInterface(
 
         SettingsSwitch(
             colors = settingsTileColorsAlt(),
-            title = { Text(text = "Hide status bar when not in game") },
-            subtitle = { Text(text = "Hide Android status bar in game list, settings, etc. App will restart when changed.") },
+            title = { Text(text = stringResource(R.string.settings_hide_status_bar)) },
+            subtitle = { Text(text = stringResource(R.string.settings_hide_status_bar_subtitle)) },
             state = hideStatusBar,
             onCheckedChange = { newValue ->
                 // Update UI immediately for responsive feel
@@ -255,10 +256,10 @@ fun SettingsGroupInterface(
     // Status bar restart confirmation dialog
     MessageDialog(
         visible = showStatusBarRestartDialog,
-        title = "Restart Required",
-        message = "Changing this setting requires the app to restart. Do you want to continue?",
-        confirmBtnText = "Restart",
-        dismissBtnText = "Cancel",
+        title = stringResource(R.string.settings_restart_required),
+        message = stringResource(R.string.settings_restart_required_message),
+        confirmBtnText = stringResource(R.string.settings_restart),
+        dismissBtnText = stringResource(R.string.cancel),
         onConfirmClick = {
             showStatusBarRestartDialog = false
             val newValue = pendingStatusBarValue ?: return@MessageDialog
@@ -304,7 +305,7 @@ fun SettingsGroupInterface(
     LoadingDialog(
         visible = showStatusBarLoadingDialog,
         progress = -1f, // Indeterminate progress
-        message = "Saving settings and restarting..."
+        message = stringResource(R.string.settings_saving_and_restarting)
     )
 }
 

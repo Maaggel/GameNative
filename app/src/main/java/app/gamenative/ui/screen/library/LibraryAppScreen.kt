@@ -192,15 +192,6 @@ fun AppScreen(
     var downloadProgress by remember(appId) {
         mutableFloatStateOf(downloadInfo?.getProgress() ?: 0f)
     }
-    var isJobActive by remember(appId) {
-        mutableStateOf(downloadInfo?.isJobActive() ?: false)
-    }
-    var justResumed by remember(appId) {
-        mutableStateOf(false)
-    }
-    val hasPartialDownload = remember(appId) {
-        SteamService.hasPartialDownload(gameId)
-    }
     var isInstalled by remember(appId) {
         mutableStateOf(SteamService.isAppInstalled(gameId))
     }
@@ -209,20 +200,7 @@ fun AppScreen(
         mutableStateOf(appInfo.branches.isNotEmpty() && appInfo.depots.isNotEmpty())
     }
 
-    val isDownloading: () -> Boolean = {
-        downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
-    }
-
-    // Determine if validating (job is active but progress is very small/zero and we have partial download)
-    // This happens when resuming - validation occurs before progress updates
-    val isValidating: () -> Boolean = {
-        downloadInfo != null && isJobActive && downloadProgress <= 0.01f && (hasPartialDownload || justResumed)
-    }
-
-    // Determine if starting a new download (job is active but progress is 0 and no partial download exists)
-    val isStartingDownload: () -> Boolean = {
-        downloadInfo != null && isJobActive && downloadProgress <= 0.01f && !hasPartialDownload
-    }
+    val isDownloading: () -> Boolean = { downloadInfo != null && downloadProgress < 1f }
 
     var loadingDialogVisible by rememberSaveable { mutableStateOf(false) }
     var loadingProgress by rememberSaveable { mutableFloatStateOf(0f) }
@@ -252,14 +230,6 @@ fun AppScreen(
         showConfigDialog = true
     }
 
-    // Refresh download info and job state when appId changes or when coming back to screen
-    LaunchedEffect(appId) {
-        Timber.d("Selected app $appId")
-        downloadInfo = SteamService.getAppDownloadInfo(gameId)
-        downloadProgress = downloadInfo?.getProgress() ?: 0f
-        isJobActive = downloadInfo?.isJobActive() ?: false
-    }
-
     DisposableEffect(downloadInfo) {
         val onDownloadProgress: (Float) -> Unit = {
             if (it >= 1f) {
@@ -267,39 +237,8 @@ fun AppScreen(
                 downloadInfo = null
                 isInstalled = true
                 MarkerUtils.addMarker(getAppDirPath(gameId), Marker.DOWNLOAD_COMPLETE_MARKER)
-                justResumed = false
             }
-
-            // If we just resumed and progress is still low, keep it at 0 to show validating
-            if (justResumed && it <= 0.01f) {
-                downloadProgress = 0f
-            } else {
-                downloadProgress = it
-
-                // Once progress increases, validation is done
-                if (justResumed && it > 0.01f) {
-                    justResumed = false
-                }
-            }
-
-            // Update job state when progress changes
-            isJobActive = downloadInfo?.isJobActive() ?: false
-        }
-
-        // Update state immediately when downloadInfo changes
-        downloadInfo?.let {
-            val currentProgress = it.getProgress()
-            // If we just resumed and progress is still low, keep it at 0 to show validating
-            if (justResumed && currentProgress <= 0.01f) {
-                downloadProgress = 0f
-            } else {
-                downloadProgress = currentProgress
-                // Once progress increases, validation is done
-                if (justResumed && currentProgress > 0.01f) {
-                    justResumed = false
-                }
-            }
-            isJobActive = it.isJobActive()
+            downloadProgress = it
         }
 
         downloadInfo?.addProgressListener(onDownloadProgress)
@@ -307,6 +246,10 @@ fun AppScreen(
         onDispose {
             downloadInfo?.removeProgressListener(onDownloadProgress)
         }
+    }
+
+    LaunchedEffect(appId) {
+        Timber.d("Selected app $appId")
     }
 
     val oldGamesDirectory by remember {
@@ -637,8 +580,6 @@ fun AppScreen(
             isInstalled = isInstalled,
             isValidToDownload = isValidToDownload,
             isDownloading = isDownloading(),
-            isValidating = isValidating(),
-            isStartingDownload = isStartingDownload(),
             downloadProgress = downloadProgress,
             onDownloadInstallClick = {
                 if (isDownloading()) {
@@ -675,34 +616,9 @@ fun AppScreen(
             onPauseResumeClick = {
                 if (isDownloading()) {
                     downloadInfo?.cancel()
-
-                    // Don't set downloadInfo to null - keep it so we can detect paused state
-                    // Update job state immediately
-                    isJobActive = false
-                    justResumed = false
+                    downloadInfo = null
                 } else {
-                    // Resume download - reset progress to 0 since validation starts from 0
-                    justResumed = true
-                    downloadProgress = 0f
-                    CoroutineScope(Dispatchers.IO).launch {
-                        downloadInfo = SteamService.downloadApp(gameId)
-
-                        // Update state immediately after getting new downloadInfo
-                        withContext(Dispatchers.Main) {
-                            isJobActive = downloadInfo?.isJobActive() ?: false
-
-                            // If progress is still 0 or very low, we're validating
-                            val currentProgress = downloadInfo?.getProgress() ?: 0f
-                            if (currentProgress <= 0.01f) {
-                                // Keep progress at 0 to show validating state
-                                downloadProgress = 0f
-                            } else {
-                                // Progress has increased, validation is done
-                                downloadProgress = currentProgress
-                                justResumed = false
-                            }
-                        }
-                    }
+                    downloadInfo = SteamService.downloadApp(gameId)
                 }
             },
             onDeleteDownloadClick = {
@@ -942,8 +858,6 @@ private fun AppScreenContent(
     isInstalled: Boolean,
     isValidToDownload: Boolean,
     isDownloading: Boolean,
-    isValidating: Boolean,
-    isStartingDownload: Boolean,
     downloadProgress: Float,
     onDownloadInstallClick: () -> Unit,
     onPauseResumeClick: () -> Unit,
@@ -1153,17 +1067,16 @@ private fun AppScreenContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Pause/Resume/Starting and Delete/Cancel when downloading or paused
+                // Pause/Resume and Delete when downloading or paused
                 // Determine if there's a partial download (in-session or from ungraceful close)
                 val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || SteamService.hasPartialDownload(appInfo.id)
-
                 // Disable resume when Wi-Fi only is enabled and there's no Wi-Fi
-                val isResume = !isDownloading && isPartiallyDownloaded && !isValidating && !isStartingDownload
+                val isResume = !isDownloading && isPartiallyDownloaded
                 val pauseResumeEnabled = if (isResume) wifiAllowed else true
-                if (isDownloading || isPartiallyDownloaded || isValidating || isStartingDownload) {
-                    // Pause, Resume, Validating, or Starting download
+                if (isDownloading || isPartiallyDownloaded) {
+                    // Pause or Resume
                     Button(
-                        enabled = pauseResumeEnabled && !isValidating && !isStartingDownload, // Disable during validation and starting
+                        enabled = pauseResumeEnabled,
                         modifier = Modifier.weight(1f),
                         onClick = onPauseResumeClick,
                         shape = RoundedCornerShape(16.dp),
@@ -1171,16 +1084,12 @@ private fun AppScreenContent(
                         contentPadding = PaddingValues(16.dp)
                     ) {
                         Text(
-                            text = when {
-                                isStartingDownload -> "Starting download..."
-                                isValidating -> "Validating..."
-                                isDownloading -> stringResource(R.string.pause_download)
-                                else -> stringResource(R.string.resume_download)
-                            },
+                            text = if (isDownloading) stringResource(R.string.pause_download)
+                                   else stringResource(R.string.resume_download),
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                         )
                     }
-                    // Cancel during starting, Delete otherwise
+                    // Delete (Cancel) download data
                     OutlinedButton(
                         modifier = Modifier.weight(1f),
                         onClick = onDeleteDownloadClick,
@@ -1189,10 +1098,7 @@ private fun AppScreenContent(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
                         contentPadding = PaddingValues(16.dp)
                     ) {
-                        Text(
-                            text = if (isStartingDownload) "Cancel" else stringResource(R.string.delete_app),
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
-                        )
+                        Text(stringResource(R.string.delete_app), style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold))
                     }
                 } else {
                     // Disable install when Wi-Fi only is enabled and there's no Wi-Fi
@@ -1627,8 +1533,6 @@ private fun Preview_AppScreen() {
                 isInstalled = false,
                 isValidToDownload = true,
                 isDownloading = isDownloading,
-                isValidating = false,
-                isStartingDownload = false,
                 downloadProgress = .50f,
                 onDownloadInstallClick = { isDownloading = !isDownloading },
                 onPauseResumeClick = { },

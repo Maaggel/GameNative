@@ -929,7 +929,6 @@ class SteamService : Service(), IChallengeUrlChanged {
                                     var lastEmit = 0L
                                     Timber.i("Downloading game to " + defaultAppInstallPath)
 
-                                    // Increase retry attempts for downloads and use longer backoff for timeouts
                                     success = retry(times = 5, backoffMs = 3_000) {
                                         ContentDownloader(instance!!.steamClient!!)
                                             .downloadApp(

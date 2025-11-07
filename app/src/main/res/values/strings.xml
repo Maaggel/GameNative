@@ -123,4 +123,12 @@
 
     <string name="resume_download">Resume</string>
     <string name="pause_download">Pause</string>
+
+    <!-- Settings - Hide Status Bar (added in hide_topbar_and_refresh_on_pulldown branch) -->
+    <string name="settings_hide_status_bar">Hide status bar when not in game</string>
+    <string name="settings_hide_status_bar_subtitle">Hide Android status bar in game list, settings, etc. App will restart when changed.</string>
+    <string name="settings_restart_required">Restart Required</string>
+    <string name="settings_restart_required_message">Changing this setting requires the app to restart. Do you want to continue?</string>
+    <string name="settings_restart">Restart</string>
+    <string name="settings_saving_and_restarting">Saving settings and restarting…</string>
 </resources>
