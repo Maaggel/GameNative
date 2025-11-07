@@ -154,7 +154,7 @@ class LibraryViewModel @Inject constructor(
                 }
                 .filter { item ->
                     if (currentState.appInfoSortType.contains(AppFilter.INSTALLED)) {
-                        // Include installed games OR games with download info (queued/downloading/paused)
+                        // Include installed games OR games with download info to include queued/downloading/paused
                         downloadDirectoryApps.contains(SteamService.getAppDirName(item)) ||
                         SteamService.getAppDownloadInfo(item.id) != null
                     } else {

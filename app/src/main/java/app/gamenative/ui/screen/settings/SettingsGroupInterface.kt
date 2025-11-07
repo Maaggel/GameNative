@@ -116,6 +116,7 @@ fun SettingsGroupInterface(
             onCheckedChange = { newValue ->
                 // Update UI immediately for responsive feel
                 hideStatusBar = newValue
+
                 // Store the pending value and show confirmation dialog
                 pendingStatusBarValue = newValue
                 showStatusBarRestartDialog = true
@@ -261,6 +262,7 @@ fun SettingsGroupInterface(
         onConfirmClick = {
             showStatusBarRestartDialog = false
             val newValue = pendingStatusBarValue ?: return@MessageDialog
+
             // Save preference and show loading dialog
             PrefManager.hideStatusBarWhenNotInGame = newValue
             showStatusBarLoadingDialog = true
@@ -268,12 +270,14 @@ fun SettingsGroupInterface(
         },
         onDismissRequest = {
             showStatusBarRestartDialog = false
+
             // Revert toggle to original value
             hideStatusBar = PrefManager.hideStatusBarWhenNotInGame
             pendingStatusBarValue = null
         },
         onDismissClick = {
             showStatusBarRestartDialog = false
+
             // Revert toggle to original value
             hideStatusBar = PrefManager.hideStatusBarWhenNotInGame
             pendingStatusBarValue = null
@@ -285,11 +289,13 @@ fun SettingsGroupInterface(
         if (showStatusBarLoadingDialog) {
             // Wait a bit for the preference to be saved (DataStore operations are async)
             delay(300)
+            
             // Verify the preference was saved by reading it back
             withContext(Dispatchers.IO) {
                 // Small delay to ensure DataStore write completes
                 delay(200)
             }
+
             // Restart the app
             AppUtils.restartApplication(context)
         }

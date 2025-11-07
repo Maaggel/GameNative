@@ -707,9 +707,10 @@ class SteamService : Service(), IChallengeUrlChanged {
             // Cancel and remove any active download
             downloadJobs[appId]?.cancel()
             downloadJobs.remove(appId)
-            
+
             // Remove any download-complete marker
             MarkerUtils.removeMarker(getAppDirPath(appId), Marker.DOWNLOAD_COMPLETE_MARKER)
+
             // Remove from DB
             with(instance!!) {
                 scope.launch {
@@ -927,6 +928,7 @@ class SteamService : Service(), IChallengeUrlChanged {
                                     val MIN_INTERVAL_MS = 1000L
                                     var lastEmit = 0L
                                     Timber.i("Downloading game to " + defaultAppInstallPath)
+
                                     // Increase retry attempts for downloads and use longer backoff for timeouts
                                     success = retry(times = 5, backoffMs = 3_000) {
                                         ContentDownloader(instance!!.steamClient!!)
@@ -1001,6 +1003,7 @@ class SteamService : Service(), IChallengeUrlChanged {
             repeat(times - 1) { attempt ->
                 try {
                     if (block()) return true
+
                     // Block returned false, retry
                     Timber.w("Download attempt ${attempt + 1}/$times returned false, retrying")
                 } catch (e: java.net.SocketTimeoutException) {

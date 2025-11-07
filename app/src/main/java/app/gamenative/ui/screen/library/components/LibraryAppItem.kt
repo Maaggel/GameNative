@@ -1,5 +1,6 @@
 package app.gamenative.ui.screen.library.components
 
+import android.annotation.SuppressLint
 import android.content.res.Configuration
 import app.gamenative.data.GameSource
 import androidx.compose.foundation.background
@@ -65,6 +66,7 @@ import app.gamenative.ui.internal.fakeAppInfo
 import app.gamenative.ui.theme.PluviaTheme
 import app.gamenative.ui.util.ListItemImage
 
+@SuppressLint("RememberReturnType")
 @Composable
 internal fun AppItem(
     modifier: Modifier = Modifier,
@@ -82,23 +84,26 @@ internal fun AppItem(
         alpha = 1f
     }
 
-    // Track download progress for overlay in Capsule/Hero views
+    /** Track download progress for overlay in Capsule/Hero views */
     val downloadInfo = remember(appInfo.appId) { SteamService.getAppDownloadInfo(appInfo.gameId) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var isJobActive by remember { mutableStateOf(false) }
     var isJobCancelled by remember { mutableStateOf(false) }
     var isJobCompleted by remember { mutableStateOf(false) }
     val hasPartialDownload = remember(appInfo.appId) { SteamService.hasPartialDownload(appInfo.gameId) }
-    
+
+    /** Determine download states **/
     // Determine if download is active (same logic as detail screen)
     val isDownloading = downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
+
     // Determine if there's a partial download (same logic as detail screen for Resume button)
     val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || hasPartialDownload
+
     // Determine if validating (job is active but progress is very small/zero and we have partial download)
     // This happens when resuming - validation occurs before progress updates
     val isValidating = downloadInfo != null && isJobActive && downloadProgress <= 0.01f && hasPartialDownload
-    
-    // Determine download status
+
+    /** Determine download status based on states **/
     val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload, isDownloading, isPartiallyDownloaded, isValidating) {
         when {
             downloadProgress >= 1f -> "Completed"
@@ -109,7 +114,7 @@ internal fun AppItem(
             else -> null // No download activity
         }
     }
-    
+
     // Show overlay for downloading, paused, or queued states
     val showDownloadOverlay = downloadStatus != null && downloadStatus != "Completed"
 
@@ -126,9 +131,11 @@ internal fun AppItem(
         refreshProgress()
     }
 
+    /** Update progress information **/
     // Refresh progress when list reloads or when downloadInfo changes
     LaunchedEffect(appInfo.appId, downloadInfo, listRefreshTrigger) {
         refreshProgress()
+
         // Also check for paused state even if downloadInfo is null
         if (downloadInfo == null && hasPartialDownload) {
             // Try to get download info again in case it exists
@@ -151,6 +158,7 @@ internal fun AppItem(
 
         val onDownloadProgress: (Float) -> Unit = { progress ->
             downloadProgress = progress
+
             // Update job state when progress changes
             isJobActive = downloadInfo?.isJobActive() ?: false
             isJobCancelled = downloadInfo?.isJobCancelled() ?: false
@@ -163,6 +171,7 @@ internal fun AppItem(
         }
     }
 
+    /** Handle focus state for controller/keyboard navigation **/
     // True when selected, e.g. with controller
     var isFocused by remember { mutableStateOf(false) }
 
@@ -238,6 +247,7 @@ internal fun AppItem(
                         "https://shared.steamstatic.com/store_item_assets/steam/apps/" + appInfo.gameId + "/header.jpg"
                     }
 
+                    /** Capsule/Hero view with download overlay **/
                     Box(modifier = Modifier.aspectRatio(aspectRatio)) {
                         ListItemImage(
                             modifier = Modifier.fillMaxSize(),
@@ -256,7 +266,7 @@ internal fun AppItem(
                                 "Queued", "Paused", "Validating" -> 1f
                                 else -> 1f - downloadProgress
                             }
-                            
+
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -267,7 +277,7 @@ internal fun AppItem(
                                         shape = RoundedCornerShape(3.dp) // Match image rounded corners
                                     )
                             )
-                            
+
                             // Show download status or percentage
                             val statusText = when (downloadStatus) {
                                 "Queued" -> "Queued"
@@ -276,7 +286,7 @@ internal fun AppItem(
                                 "Downloading" -> String.format("%.1f%%", downloadProgress * 100)
                                 else -> String.format("%.1f%%", downloadProgress * 100)
                             }
-                            
+
                             Text(
                                 text = statusText,
                                 modifier = Modifier
@@ -360,6 +370,7 @@ internal fun AppItem(
     }
 }
 
+@SuppressLint("RememberReturnType")
 @Composable
 internal fun GameInfoBlock(
     modifier: Modifier,
@@ -378,16 +389,19 @@ internal fun GameInfoBlock(
     val isInstalled = remember(appInfo.appId) {
         SteamService.isAppInstalled(appInfo.gameId)
     }
-    
+
+    /** Determine download states **/
     // Determine if download is active (same logic as detail screen)
     val isDownloading = downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
+
     // Determine if there's a partial download (same logic as detail screen for Resume button)
     val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || hasPartialDownload
+
     // Determine if validating (job is active but progress is very small/zero and we have partial download)
     // This happens when resuming - validation occurs before progress updates
     val isValidating = downloadInfo != null && isJobActive && downloadProgress <= 0.01f && hasPartialDownload
-    
-    // Determine download status
+
+    /** Determine download status based on states **/
     val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, isJobCancelled, isJobCompleted, hasPartialDownload, isDownloading, isPartiallyDownloaded, isValidating) {
         when {
             downloadProgress >= 1f -> "Completed"
@@ -437,6 +451,7 @@ internal fun GameInfoBlock(
 
         val onDownloadProgress: (Float) -> Unit = { progress ->
             downloadProgress = progress
+
             // Update job state when progress changes
             isJobActive = downloadInfo?.isJobActive() ?: false
             isJobCancelled = downloadInfo?.isJobCancelled() ?: false

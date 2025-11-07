@@ -195,9 +195,6 @@ fun AppScreen(
     var isJobActive by remember(appId) {
         mutableStateOf(downloadInfo?.isJobActive() ?: false)
     }
-    var isJobCancelled by remember(appId) {
-        mutableStateOf(downloadInfo?.isJobCancelled() ?: false)
-    }
     var justResumed by remember(appId) {
         mutableStateOf(false)
     }
@@ -212,16 +209,16 @@ fun AppScreen(
         mutableStateOf(appInfo.branches.isNotEmpty() && appInfo.depots.isNotEmpty())
     }
 
-    val isDownloading: () -> Boolean = { 
+    val isDownloading: () -> Boolean = {
         downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
     }
-    
+
     // Determine if validating (job is active but progress is very small/zero and we have partial download)
     // This happens when resuming - validation occurs before progress updates
     val isValidating: () -> Boolean = {
         downloadInfo != null && isJobActive && downloadProgress <= 0.01f && (hasPartialDownload || justResumed)
     }
-    
+
     // Determine if starting a new download (job is active but progress is 0 and no partial download exists)
     val isStartingDownload: () -> Boolean = {
         downloadInfo != null && isJobActive && downloadProgress <= 0.01f && !hasPartialDownload
@@ -261,7 +258,6 @@ fun AppScreen(
         downloadInfo = SteamService.getAppDownloadInfo(gameId)
         downloadProgress = downloadInfo?.getProgress() ?: 0f
         isJobActive = downloadInfo?.isJobActive() ?: false
-        isJobCancelled = downloadInfo?.isJobCancelled() ?: false
     }
 
     DisposableEffect(downloadInfo) {
@@ -273,19 +269,21 @@ fun AppScreen(
                 MarkerUtils.addMarker(getAppDirPath(gameId), Marker.DOWNLOAD_COMPLETE_MARKER)
                 justResumed = false
             }
+
             // If we just resumed and progress is still low, keep it at 0 to show validating
             if (justResumed && it <= 0.01f) {
                 downloadProgress = 0f
             } else {
                 downloadProgress = it
+
                 // Once progress increases, validation is done
                 if (justResumed && it > 0.01f) {
                     justResumed = false
                 }
             }
+
             // Update job state when progress changes
             isJobActive = downloadInfo?.isJobActive() ?: false
-            isJobCancelled = downloadInfo?.isJobCancelled() ?: false
         }
 
         // Update state immediately when downloadInfo changes
@@ -302,7 +300,6 @@ fun AppScreen(
                 }
             }
             isJobActive = it.isJobActive()
-            isJobCancelled = it.isJobCancelled()
         }
 
         downloadInfo?.addProgressListener(onDownloadProgress)
@@ -678,10 +675,10 @@ fun AppScreen(
             onPauseResumeClick = {
                 if (isDownloading()) {
                     downloadInfo?.cancel()
+
                     // Don't set downloadInfo to null - keep it so we can detect paused state
                     // Update job state immediately
                     isJobActive = false
-                    isJobCancelled = true
                     justResumed = false
                 } else {
                     // Resume download - reset progress to 0 since validation starts from 0
@@ -689,10 +686,11 @@ fun AppScreen(
                     downloadProgress = 0f
                     CoroutineScope(Dispatchers.IO).launch {
                         downloadInfo = SteamService.downloadApp(gameId)
+
                         // Update state immediately after getting new downloadInfo
                         withContext(Dispatchers.Main) {
                             isJobActive = downloadInfo?.isJobActive() ?: false
-                            isJobCancelled = downloadInfo?.isJobCancelled() ?: false
+
                             // If progress is still 0 or very low, we're validating
                             val currentProgress = downloadInfo?.getProgress() ?: 0f
                             if (currentProgress <= 0.01f) {
@@ -1158,6 +1156,7 @@ private fun AppScreenContent(
                 // Pause/Resume/Starting and Delete/Cancel when downloading or paused
                 // Determine if there's a partial download (in-session or from ungraceful close)
                 val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || SteamService.hasPartialDownload(appInfo.id)
+
                 // Disable resume when Wi-Fi only is enabled and there's no Wi-Fi
                 val isResume = !isDownloading && isPartiallyDownloaded && !isValidating && !isStartingDownload
                 val pauseResumeEnabled = if (isResume) wifiAllowed else true

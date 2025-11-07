@@ -102,19 +102,23 @@ internal fun LibraryListPane(
     LaunchedEffect(state.appInfoList.size, state.totalAppsInFilter) {
         if (isRefreshing && refreshStartState != null) {
             val (startSize, startTotal) = refreshStartState!!
+
             // Check if state has changed since refresh started
-            val hasChanged = state.appInfoList.size != startSize || 
+            val hasChanged = state.appInfoList.size != startSize ||
                            state.totalAppsInFilter != startTotal
-            
+
             if (hasChanged) {
-                // State updated, refresh is complete
-                delay(200) // Small delay for smooth UI transition
+                /** State updated, refresh is complete */
+
+                // Small delay for smooth UI transition
+                delay(200)
+
                 isRefreshing = false
                 refreshStartState = null
             }
         }
     }
-    
+
     // Fallback: if refresh takes too long, turn it off anyway
     LaunchedEffect(isRefreshing) {
         if (isRefreshing) {
@@ -282,32 +286,32 @@ internal fun LibraryListPane(
                             bottom = 72.dp
                         ),
                     ) {
-                    items(items = state.appInfoList, key = { it.index }) { item ->
-                        if (item.index > 0 && paneType == PaneType.LIST) {
-                            // Dividers in list view
-                            HorizontalDivider()
+                        items(items = state.appInfoList, key = { it.index }) { item ->
+                            if (item.index > 0 && paneType == PaneType.LIST) {
+                                // Dividers in list view
+                                HorizontalDivider()
+                            }
+                            AppItem(
+                                appInfo = item,
+                                onClick = { onNavigate(item.appId) },
+                                paneType = paneType,
+                                onFocus = { targetOfScroll = item.index },
+                                listRefreshTrigger = state.appInfoList.size, // Changes when list refreshes
+                            )
                         }
-                        AppItem(
-                            appInfo = item,
-                            onClick = { onNavigate(item.appId) },
-                            paneType = paneType,
-                            onFocus = { targetOfScroll = item.index },
-                            listRefreshTrigger = state.appInfoList.size, // Changes when list refreshes
-                        )
-                    }
-                    if (state.appInfoList.size < state.totalAppsInFilter) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
+                        if (state.appInfoList.size < state.totalAppsInFilter) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator()
+                                }
                             }
                         }
                     }
-                }
                 }
 
                 // Filter FAB - always show

@@ -301,11 +301,14 @@ fun PluviaMain(
             // Log.d("PluviaMain", "Screen changed to $currentScreen, resetting some values")
             // TODO: remove this if statement once XServerScreen orientation change bug is fixed
             if (state.currentScreen != PluviaScreen.XServer) {
-                // reset system ui visibility based on user preference
-                // If hideStatusBarWhenNotInGame is true, hide the status bar (visible = false)
-                // If false, show the status bar (visible = true)
+                /**
+                 * Reset system ui visibility based on user preference:
+                 * - If hideStatusBarWhenNotInGame is true, hide the status bar (visible = false)
+                 * - If false, show the status bar (visible = true)
+                 */
                 val shouldShowStatusBar = !PrefManager.hideStatusBarWhenNotInGame
                 PluviaApp.events.emit(AndroidEvent.SetSystemUIVisibility(shouldShowStatusBar))
+
                 // reset available orientations
                 PluviaApp.events.emit(AndroidEvent.SetAllowedOrientation(EnumSet.of(Orientation.UNSPECIFIED)))
             }
