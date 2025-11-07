@@ -92,6 +92,7 @@ import com.google.android.play.core.splitcompat.SplitCompat
 import com.skydoves.landscapist.ImageOptions
 import com.skydoves.landscapist.coil.CoilImage
 import app.gamenative.utils.SteamUtils
+import app.gamenative.ui.util.DownloadStateUtils
 import com.winlator.container.ContainerData
 import com.winlator.xenvironment.ImageFsInstaller
 import com.winlator.fexcore.FEXCoreManager
@@ -209,20 +210,26 @@ fun AppScreen(
         mutableStateOf(appInfo.branches.isNotEmpty() && appInfo.depots.isNotEmpty())
     }
 
-    val isDownloading: () -> Boolean = {
-        downloadInfo != null && downloadProgress < 1f && isJobActive && downloadProgress > 0.01f
+    // Calculate all download states at once using DownloadStateUtils
+    val downloadStates: () -> DownloadStateUtils.DownloadStateFlags = {
+        val isActivelyDownloading = SteamService.isActivelyDownloading(gameId)
+        DownloadStateUtils.calculateDownloadStates(
+            downloadInfo = downloadInfo,
+            downloadProgress = downloadProgress,
+            isJobActive = isJobActive,
+            hasPartialDownload = hasPartialDownload,
+            isActivelyDownloading = isActivelyDownloading,
+            justResumed = justResumed
+        )
     }
 
-    // Determine if validating (job is active but progress is very small/zero and we have partial download)
-    // This happens when resuming - validation occurs before progress updates
-    val isValidating: () -> Boolean = {
-        downloadInfo != null && isJobActive && downloadProgress <= 0.01f && (hasPartialDownload || justResumed)
-    }
-
-    // Determine if starting a new download (job is active but progress is 0 and no partial download exists)
-    val isStartingDownload: () -> Boolean = {
-        downloadInfo != null && isJobActive && downloadProgress <= 0.01f && !hasPartialDownload
-    }
+    // Convenience functions for individual states
+    val isDownloading: () -> Boolean = { downloadStates().isDownloading }
+    val isValidating: () -> Boolean = { downloadStates().isValidating }
+    val isStartingDownload: () -> Boolean = { downloadStates().isStartingDownload }
+    val isQueued: () -> Boolean = { downloadStates().isQueued }
+    val isPartiallyDownloaded: () -> Boolean = { downloadStates().isPartiallyDownloaded }
+    val isActivelyDownloading: () -> Boolean = { downloadStates().isActivelyDownloading }
 
     var loadingDialogVisible by rememberSaveable { mutableStateOf(false) }
     var loadingProgress by rememberSaveable { mutableFloatStateOf(0f) }
@@ -501,8 +508,13 @@ fun AppScreen(
 
         DialogType.DELETE_APP -> {
             onConfirmClick = {
+                // Cancel download if it exists (for paused downloads)
+                downloadInfo?.cancel()
                 // Delete the Steam app data
                 SteamService.deleteApp(gameId)
+                // Clear download state
+                downloadInfo = null
+                downloadProgress = 0f
                 // Also delete the associated container so it will be recreated on next launch
                 ContainerUtils.deleteContainer(context, appId)
                 msgDialogState = MessageDialogState(false)
@@ -633,8 +645,10 @@ fun AppScreen(
             isInstalled = isInstalled,
             isValidToDownload = isValidToDownload,
             isDownloading = isDownloading(),
-            isValidating = isValidating(),
             isStartingDownload = isStartingDownload(),
+            isValidating = isValidating(),
+            isQueued = isQueued(),
+            isPartiallyDownloaded = isPartiallyDownloaded(),
             downloadProgress = downloadProgress,
             onDownloadInstallClick = {
                 if (isDownloading()) {
@@ -702,14 +716,29 @@ fun AppScreen(
                 }
             },
             onDeleteDownloadClick = {
-                msgDialogState = MessageDialogState(
-                    visible = true,
-                    type = DialogType.CANCEL_APP_DOWNLOAD,
-                    title = context.getString(R.string.cancel_download_prompt_title),
-                    message = context.getString(R.string.delete_download_data),
-                    confirmBtnText = context.getString(R.string.yes),
-                    dismissBtnText = context.getString(R.string.no)
-                )
+                // If download is active (downloading, starting, validating, or queued), show cancel dialog
+                // Otherwise (paused), show delete dialog
+                val isActive = isDownloading() || isStartingDownload() || isValidating() || isQueued()
+                if (isActive) {
+                    msgDialogState = MessageDialogState(
+                        visible = true,
+                        type = DialogType.CANCEL_APP_DOWNLOAD,
+                        title = context.getString(R.string.cancel_download_prompt_title),
+                        message = context.getString(R.string.delete_download_data),
+                        confirmBtnText = context.getString(R.string.yes),
+                        dismissBtnText = context.getString(R.string.no)
+                    )
+                } else {
+                    // Paused download - show delete dialog
+                    msgDialogState = MessageDialogState(
+                        visible = true,
+                        type = DialogType.DELETE_APP,
+                        title = context.getString(R.string.delete_app),
+                        message = context.getString(R.string.delete_app_message),
+                        confirmBtnText = context.getString(R.string.delete_app),
+                        dismissBtnText = context.getString(R.string.cancel)
+                    )
+                }
             },
             onUpdateClick = { CoroutineScope(Dispatchers.IO).launch {
                 downloadInfo = SteamService.downloadApp(gameId)
@@ -934,8 +963,10 @@ private fun AppScreenContent(
     isInstalled: Boolean,
     isValidToDownload: Boolean,
     isDownloading: Boolean,
-    isValidating: Boolean,
     isStartingDownload: Boolean,
+    isValidating: Boolean,
+    isQueued: Boolean,
+    isPartiallyDownloaded: Boolean,
     downloadProgress: Float,
     onDownloadInstallClick: () -> Unit,
     onPauseResumeClick: () -> Unit,
@@ -964,10 +995,10 @@ private fun AppScreenContent(
                 if (file.exists()) {
                     SteamUtils.fromSteamTime((file.lastModified() / 1000).toInt())
                 } else {
-                    stringResource(R.string.never)
+                    context.getString(R.string.never)
                 }
             } else {
-                stringResource(R.string.never)
+                context.getString(R.string.never)
             }
         )
     }
@@ -1146,16 +1177,13 @@ private fun AppScreenContent(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Pause/Resume/Starting and Delete/Cancel when downloading or paused
-                // Determine if there's a partial download (in-session or from ungraceful close)
-                val isPartiallyDownloaded = (downloadProgress > 0f && downloadProgress < 1f) || SteamService.hasPartialDownload(appInfo.id)
-
                 // Disable resume when Wi-Fi only is enabled and there's no Wi-Fi
-                val isResume = !isDownloading && isPartiallyDownloaded && !isValidating && !isStartingDownload
+                val isResume = !isDownloading && isPartiallyDownloaded && !isValidating && !isStartingDownload && !isQueued
                 val pauseResumeEnabled = if (isResume) wifiAllowed else true
-                if (isDownloading || isPartiallyDownloaded || isValidating || isStartingDownload) {
-                    // Pause, Resume, Validating, or Starting download
+                if (isDownloading || isPartiallyDownloaded || isValidating || isStartingDownload || isQueued) {
+                    // Pause, Resume, Validating, Starting download, or Queued
                     Button(
-                        enabled = pauseResumeEnabled && !isValidating && !isStartingDownload, // Disable during validation and starting
+                        enabled = pauseResumeEnabled && !isValidating && !isStartingDownload && !isQueued, // Disable during validation, starting, and queued
                         modifier = Modifier.weight(1f),
                         onClick = onPauseResumeClick,
                         shape = RoundedCornerShape(16.dp),
@@ -1164,6 +1192,7 @@ private fun AppScreenContent(
                     ) {
                         Text(
                             text = when {
+                                isQueued -> stringResource(R.string.queued)
                                 isStartingDownload -> stringResource(R.string.starting_download)
                                 isValidating -> stringResource(R.string.validating)
                                 isDownloading -> stringResource(R.string.pause_download)
@@ -1172,7 +1201,7 @@ private fun AppScreenContent(
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                         )
                     }
-                    // Cancel during starting, Delete otherwise
+                    // Cancel during starting/queued, Delete otherwise
                     OutlinedButton(
                         modifier = Modifier.weight(1f),
                         onClick = onDeleteDownloadClick,
@@ -1182,7 +1211,7 @@ private fun AppScreenContent(
                         contentPadding = PaddingValues(16.dp)
                     ) {
                         Text(
-                            text = if (isStartingDownload) stringResource(R.string.cancel) else stringResource(R.string.delete_app),
+                            text = if (isStartingDownload || isQueued) stringResource(R.string.cancel) else stringResource(R.string.delete_app),
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                         )
                     }
@@ -1252,9 +1281,9 @@ private fun AppScreenContent(
                         val secondsLeft = remaining / 1000
                         val minutesLeft = secondsLeft / 60
                         val secondsPart = secondsLeft % 60
-                        stringResource(R.string.time_left, minutesLeft.toInt(), secondsPart.toInt())
+                        context.getString(R.string.time_left, minutesLeft.toInt(), secondsPart.toInt())
                     } else {
-                        stringResource(R.string.calculating)
+                        context.getString(R.string.calculating)
                     }
                 }
                 Column(
@@ -1454,6 +1483,7 @@ private fun AppScreenContent(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
+
                                     // Show skeleton while calculating disk size, otherwise show actual text
                                     if (isInstalled && (appSizeOnDisk.isEmpty() || appSizeOnDisk == " ...")) {
                                         SkeletonText(lines = 1, lineHeight = 20)
@@ -1621,6 +1651,8 @@ private fun Preview_AppScreen() {
                 isDownloading = isDownloading,
                 isValidating = false,
                 isStartingDownload = false,
+                isQueued = false,
+                isPartiallyDownloaded = false,
                 downloadProgress = .50f,
                 onDownloadInstallClick = { isDownloading = !isDownloading },
                 onPauseResumeClick = { },

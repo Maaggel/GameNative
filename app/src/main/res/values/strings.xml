@@ -175,7 +175,7 @@
     <string name="cloud_sync_success">Cloud sync completed successfully</string>
     <string name="cloud_sync_uptodate">Save files are already up to date</string>
     <string name="cloud_sync_failed">Cloud sync failed: %1$s</string>
-    <string name="starting_download">Starting download…</string>
+    <string name="starting_download">Starting…</string>
     <string name="validating">Validating…</string>
     <string name="need_internet_install">Need internet to install</string>
     <string name="install_wifi_only">Install over WiFi only enabled</string>

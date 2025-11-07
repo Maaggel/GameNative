@@ -270,6 +270,10 @@ class SteamService : Service(), IChallengeUrlChanged {
         private var instance: SteamService? = null
 
         private val downloadJobs = ConcurrentHashMap<Int, DownloadInfo>()
+        
+        // Track which appId is actively downloading (only one at a time)
+        @Volatile
+        private var activelyDownloadingAppId: Int? = null
 
         /** Returns true if there is an incomplete download on disk (no complete marker). */
         fun hasPartialDownload(appId: Int): Boolean {
@@ -430,6 +434,62 @@ class SteamService : Service(), IChallengeUrlChanged {
 
         fun getAppDownloadInfo(appId: Int): DownloadInfo? {
             return downloadJobs[appId]
+        }
+
+        /**
+         * Checks if another download (excluding the specified appId) is actively downloading.
+         * A download is considered active if it has progress > 1% and the job is active.
+         * @deprecated Use isActivelyDownloading() instead
+         */
+        fun hasAnotherActiveDownload(excludingAppId: Int): Boolean {
+            val activeId = activelyDownloadingAppId
+            return activeId != null && activeId != excludingAppId
+        }
+
+        /**
+         * Checks if a specific appId is actively downloading.
+         */
+        fun isActivelyDownloading(appId: Int): Boolean {
+            return activelyDownloadingAppId == appId
+        }
+
+        /**
+         * Gets the appId that is currently actively downloading, or null if none.
+         */
+        fun getActivelyDownloadingAppId(): Int? {
+            return activelyDownloadingAppId
+        }
+
+        /**
+         * Sets the actively downloading appId.
+         * If another appId is currently active, it will be cancelled and removed.
+         */
+        private fun setActivelyDownloadingAppId(appId: Int) {
+            val previousActiveId = activelyDownloadingAppId
+            if (previousActiveId != null && previousActiveId != appId) {
+                Timber.i("Cancelling previous active download $previousActiveId to set $appId as active")
+                downloadJobs[previousActiveId]?.cancel()
+                downloadJobs.remove(previousActiveId)
+            }
+            activelyDownloadingAppId = appId
+            Timber.d("Set actively downloading appId to $appId")
+        }
+
+        /**
+         * Clears the actively downloading appId.
+         */
+        private fun clearActivelyDownloadingAppId() {
+            activelyDownloadingAppId = null
+            Timber.d("Cleared actively downloading appId")
+        }
+
+        /**
+         * Clears the actively downloading appId if it matches the given appId.
+         */
+        private fun clearActivelyDownloadingAppIdIfMatches(appId: Int) {
+            if (activelyDownloadingAppId == appId) {
+                clearActivelyDownloadingAppId()
+            }
         }
 
         fun isAppInstalled(appId: Int): Boolean {
@@ -707,6 +767,8 @@ class SteamService : Service(), IChallengeUrlChanged {
             // Cancel and remove any active download
             downloadJobs[appId]?.cancel()
             downloadJobs.remove(appId)
+            // Clear active download status if this was the active one
+            clearActivelyDownloadingAppIdIfMatches(appId)
 
             // Remove any download-complete marker
             MarkerUtils.removeMarker(getAppDirPath(appId), Marker.DOWNLOAD_COMPLETE_MARKER)
@@ -917,6 +979,10 @@ class SteamService : Service(), IChallengeUrlChanged {
 
             Timber.i("Starting download for $appId")
 
+            // Set this as the actively downloading app immediately when download starts
+            // This prevents multiple downloads from starting simultaneously
+            setActivelyDownloadingAppId(appId)
+
             val info = DownloadInfo(entitledDepotIds.size).also { di ->
                 di.setDownloadJob(instance!!.scope.launch {
                     coroutineScope {
@@ -961,7 +1027,9 @@ class SteamService : Service(), IChallengeUrlChanged {
                         }.awaitAll()
                     }
                     downloadJobs.remove(appId)
-                    // Write download complete marker on disk
+
+                    // Clear active download status if this was the active one
+                    clearActivelyDownloadingAppIdIfMatches(appId)
                 })
             }
 
@@ -982,12 +1050,16 @@ class SteamService : Service(), IChallengeUrlChanged {
                 if (percent != lastPercent) {          // only when it really changed
                     lastPercent = percent
                 }
+
                 if (percent >= 100) {
                     val ownedDlc = runBlocking { getOwnedAppDlc(appId) }
                     MarkerUtils.addMarker(getAppDirPath(appId), Marker.DOWNLOAD_COMPLETE_MARKER)
                     runBlocking { instance?.appInfoDao?.insert(AppInfo(appId, isDownloaded = true, downloadedDepots = entitledDepotIds,
                         dlcDepots = ownedDlc.values.map { it.dlcAppId }.distinct())) }
                     MarkerUtils.removeMarker(getAppDirPath(appId), Marker.STEAM_DLL_REPLACED)
+
+                    // Clear active download status when complete
+                    clearActivelyDownloadingAppIdIfMatches(appId)
                 }
             }
             return info
@@ -1686,6 +1758,10 @@ class SteamService : Service(), IChallengeUrlChanged {
         PluviaApp.events.on<AndroidEvent.EndProcess, Unit>(onEndProcess)
 
         notificationHelper = NotificationHelper(applicationContext)
+        
+        // Clear active download status on service start (fleeting - doesn't persist across app restarts)
+        clearActivelyDownloadingAppId()
+        
         // Setup Wi-Fi connectivity monitoring for download-on-WiFi-only
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         // Determine initial Wi-Fi state
@@ -1708,6 +1784,9 @@ class SteamService : Service(), IChallengeUrlChanged {
                         info.cancel()
                     }
                     downloadJobs.clear()
+                    
+                    // Clear active download status
+                    clearActivelyDownloadingAppId()
                     notificationHelper.notify("Download paused – waiting for Wi-Fi")
                 }
             }
