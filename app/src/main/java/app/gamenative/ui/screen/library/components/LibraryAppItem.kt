@@ -269,13 +269,11 @@ internal fun AppItem(
                             )
 
                             // Show download status or percentage
-                            val statusText = when (downloadStatus) {
-                                DownloadStatus.QUEUED -> stringResource(R.string.queued)
-                                DownloadStatus.PAUSED -> stringResource(R.string.paused)
-                                DownloadStatus.VALIDATING -> stringResource(R.string.validating)
-                                DownloadStatus.DOWNLOADING -> String.format("%.1f%%", downloadProgress * 100)
-                                else -> String.format("%.1f%%", downloadProgress * 100)
-                            }
+                            val statusText = DownloadStateUtils.getDownloadStatusText(
+                                downloadStatus = downloadStatus,
+                                downloadProgress = downloadProgress,
+                                isInstalled = false // Overlay only shows for download states
+                            )
 
                             Text(
                                 text = statusText,
@@ -369,19 +367,17 @@ internal fun GameInfoBlock(
 ) {
     // For text displayed in list view, or as override if image loading fails
 
-    // Determine download and install state
+    // Get download info for progress tracking
     val downloadInfo = remember(appInfo.appId) { SteamService.getAppDownloadInfo(appInfo.gameId) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var isJobActive by remember { mutableStateOf(false) }
-    val hasPartialDownload = remember(appInfo.appId) { SteamService.hasPartialDownload(appInfo.gameId) }
-    var isActivelyDownloading by remember { mutableStateOf(SteamService.isActivelyDownloading(appInfo.gameId)) }
     val isInstalled = remember(appInfo.appId) {
         SteamService.isAppInstalled(appInfo.gameId)
     }
 
-    /** Determine download status based on states **/
-    val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading) {
-        DownloadStateUtils.getDownloadStatus(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading = isActivelyDownloading)
+    /** Determine download status using consolidated function **/
+    val downloadStatus = remember(appInfo.gameId, downloadInfo, downloadProgress, listRefreshTrigger) {
+        DownloadStateUtils.getGameDownloadStatus(appInfo.gameId)
     }
 
     // Function to refresh progress from downloadInfo - can be called from remember and LaunchedEffect
@@ -399,9 +395,8 @@ internal fun GameInfoBlock(
     // Refresh progress when list reloads (for downloading games) or when downloadInfo changes
     LaunchedEffect(appInfo.appId, downloadInfo, listRefreshTrigger) {
         refreshProgress()
-        // Update active download status
-        isActivelyDownloading = SteamService.isActivelyDownloading(appInfo.gameId)
         // Also check for paused state even if downloadInfo is null
+        val hasPartialDownload = SteamService.hasPartialDownload(appInfo.gameId)
         if (downloadInfo == null && hasPartialDownload) {
             // Try to get download info again in case it exists
             val currentDownloadInfo = SteamService.getAppDownloadInfo(appInfo.gameId)
@@ -460,24 +455,19 @@ internal fun GameInfoBlock(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             // Status indicator: Installing / Installed / Not installed
-            val statusText = when {
-                downloadStatus != null -> when (downloadStatus) {
-                    DownloadStatus.QUEUED -> stringResource(R.string.queued)
-                    DownloadStatus.PAUSED -> stringResource(R.string.paused)
-                    DownloadStatus.VALIDATING -> stringResource(R.string.validating)
-                    DownloadStatus.DOWNLOADING -> stringResource(R.string.installing_percent, downloadProgress * 100)
-                    DownloadStatus.COMPLETED -> stringResource(R.string.installed)
-                }
-                isInstalled -> stringResource(R.string.installed)
-                else -> stringResource(R.string.not_installed_status)
-            }
+            val statusText = DownloadStateUtils.getDownloadStatusText(
+                downloadStatus = downloadStatus,
+                downloadProgress = downloadProgress,
+                isInstalled = isInstalled
+            )
             val statusColor = when {
                 downloadStatus != null || isInstalled -> MaterialTheme.colorScheme.tertiary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
             }
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.Center
             ) {
                 // Status dot
                 Box(
@@ -487,6 +477,7 @@ internal fun GameInfoBlock(
                 )
                 // Status text
                 Text(
+                    modifier = Modifier.padding(start = 8.dp),
                     text = statusText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = statusColor
@@ -494,6 +485,7 @@ internal fun GameInfoBlock(
                 // Download percentage when downloading (not paused or queued)
                 if (downloadStatus == DownloadStatus.DOWNLOADING) {
                     Text(
+                        modifier = Modifier.padding(start = 8.dp),
                         text = String.format("%.1f%%", downloadProgress * 100),
                         style = MaterialTheme.typography.bodyMedium,
                         color = statusColor

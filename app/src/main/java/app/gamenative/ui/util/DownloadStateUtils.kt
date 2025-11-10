@@ -1,7 +1,52 @@
 package app.gamenative.ui.util
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import app.gamenative.R
 import app.gamenative.data.DownloadInfo
+import app.gamenative.service.SteamService
 import app.gamenative.ui.enums.DownloadStatus
+
+/**
+ * Represents a status text resource that can be used with stringResource in Compose.
+ * For simple strings, use [resourceId] with no arguments.
+ * For formatted strings, use [resourceId] with [formatArgs].
+ */
+data class StatusTextResource(
+    val resourceId: Int,
+    val formatArgs: Array<Any> = emptyArray()
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as StatusTextResource
+
+        if (resourceId != other.resourceId) return false
+        if (!formatArgs.contentEquals(other.formatArgs)) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = resourceId
+        result = 31 * result + formatArgs.contentHashCode()
+        return result
+    }
+}
+
+/**
+ * Extension function to convert StatusTextResource to a string using stringResource.
+ * This makes it easier to use in Compose without manually checking formatArgs.
+ */
+@Composable
+fun StatusTextResource.asString(): String {
+    return if (formatArgs.isEmpty()) {
+        stringResource(resourceId)
+    } else {
+        stringResource(resourceId, *formatArgs)
+    }
+}
 
 /**
  * Utility functions for calculating download states.
@@ -171,6 +216,85 @@ object DownloadStateUtils {
             isPartiallyDownloaded = isPartiallyDownloaded(downloadProgress, hasPartialDownload),
             isActivelyDownloading = isActivelyDownloading
         )
+    }
+
+    /**
+     * Gets the download status for a game by its ID.
+     * This function consolidates all the logic needed to determine download status
+     * by fetching all necessary information from SteamService.
+     *
+     * @param gameId The game ID to check
+     * @return The download status, or null if there's no download activity
+     */
+    fun getGameDownloadStatus(gameId: Int): DownloadStatus? {
+        val downloadInfo = SteamService.getAppDownloadInfo(gameId)
+        val downloadProgress = downloadInfo?.getProgress() ?: 0f
+        val isJobActive = downloadInfo?.isJobActive() ?: false
+        val hasPartialDownload = SteamService.hasPartialDownload(gameId)
+        val isActivelyDownloading = SteamService.isActivelyDownloading(gameId)
+
+        return getDownloadStatus(
+            downloadInfo = downloadInfo,
+            downloadProgress = downloadProgress,
+            isJobActive = isJobActive,
+            hasPartialDownload = hasPartialDownload,
+            isActivelyDownloading = isActivelyDownloading
+        )
+    }
+
+    /**
+     * Gets the status text for a game's download/install state.
+     * Returns localized strings based on the download status and installation state.
+     *
+     * @param downloadStatus The current download status, or null if no download activity
+     * @param downloadProgress The download progress (0.0 to 1.0)
+     * @param isInstalled Whether the game is installed. If not provided, defaults to false
+     *                    unless downloadStatus is COMPLETED (then defaults to true).
+     * @return The localized status text string
+     */
+    @Composable
+    fun getDownloadStatusText(
+        downloadStatus: DownloadStatus?,
+        downloadProgress: Float,
+        isInstalled: Boolean? = null
+    ): String {
+        val effectiveIsInstalled = isInstalled ?: (downloadStatus == DownloadStatus.COMPLETED)
+        val statusTextRes = when {
+            downloadStatus != null -> when (downloadStatus) {
+                DownloadStatus.QUEUED -> StatusTextResource(R.string.queued)
+                DownloadStatus.PAUSED -> StatusTextResource(R.string.paused)
+                DownloadStatus.VALIDATING -> StatusTextResource(R.string.validating)
+                DownloadStatus.DOWNLOADING -> StatusTextResource(
+                    R.string.installing_percent,
+                    arrayOf(downloadProgress * 100)
+                )
+                DownloadStatus.COMPLETED -> StatusTextResource(R.string.installed)
+            }
+            effectiveIsInstalled -> StatusTextResource(R.string.installed)
+            else -> StatusTextResource(R.string.not_installed_status)
+        }
+        return statusTextRes.asString()
+    }
+
+    /**
+     * Gets the status text for a game's download/install state by game ID.
+     * Returns localized strings based on the download status and installation state.
+     *
+     * @param gameId The game ID to check
+     * @param downloadProgress The download progress (0.0 to 1.0)
+     * @param isInstalled Whether the game is installed. If not provided, defaults to false
+     *                    unless downloadStatus is COMPLETED (then defaults to true).
+     * @return The localized status text string
+     */
+    @Composable
+    fun getGameDownloadStatusText(
+        gameId: Int,
+        downloadProgress: Float,
+        isInstalled: Boolean? = null
+    ): String {
+        val downloadStatus = getGameDownloadStatus(gameId)
+        val effectiveIsInstalled = isInstalled ?: (downloadStatus == DownloadStatus.COMPLETED)
+        return getDownloadStatusText(downloadStatus, downloadProgress, effectiveIsInstalled)
     }
 }
 
