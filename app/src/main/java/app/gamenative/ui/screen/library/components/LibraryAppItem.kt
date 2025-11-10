@@ -126,6 +126,7 @@ internal fun AppItem(
     // Refresh progress when list reloads or when downloadInfo changes
     LaunchedEffect(appInfo.appId, downloadInfo, listRefreshTrigger) {
         refreshProgress()
+         
         // Update active download status
         isActivelyDownloading = SteamService.isActivelyDownloading(appInfo.gameId)
 
@@ -257,6 +258,14 @@ internal fun AppItem(
                                 else -> 1f - downloadProgress
                             }
 
+                            // Show download status or percentage
+                            val statusText = DownloadStateUtils.getDownloadStatusText(
+                                downloadStatus = downloadStatus,
+                                downloadProgress = downloadProgress,
+                                isInstalled = false, // Overlay only shows for download states
+                                gameId = appInfo.gameId
+                            )
+
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -265,31 +274,26 @@ internal fun AppItem(
                                     .background(
                                         color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.8f),
                                         shape = RoundedCornerShape(3.dp) // Match image rounded corners
-                                    )
-                            )
-
-                            // Show download status or percentage
-                            val statusText = DownloadStateUtils.getDownloadStatusText(
-                                downloadStatus = downloadStatus,
-                                downloadProgress = downloadProgress,
-                                isInstalled = false // Overlay only shows for download states
-                            )
-
-                            Text(
-                                text = statusText,
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .padding(8.dp),
-                                style = MaterialTheme.typography.headlineMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    shadow = androidx.compose.ui.graphics.Shadow(
-                                        color = androidx.compose.ui.graphics.Color.Black,
-                                        offset = androidx.compose.ui.geometry.Offset(0f, 0f),
-                                        blurRadius = 4f
-                                    )
-                                ),
-                                color = androidx.compose.ui.graphics.Color.White,
-                            )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = statusText,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        shadow = androidx.compose.ui.graphics.Shadow(
+                                            color = androidx.compose.ui.graphics.Color.Black,
+                                            offset = androidx.compose.ui.geometry.Offset(0f, 0f),
+                                            blurRadius = 4f
+                                        )
+                                    ),
+                                    color = androidx.compose.ui.graphics.Color.White,
+                                )
+                            }
                         }
                     }
 
@@ -458,8 +462,16 @@ internal fun GameInfoBlock(
             val statusText = DownloadStateUtils.getDownloadStatusText(
                 downloadStatus = downloadStatus,
                 downloadProgress = downloadProgress,
-                isInstalled = isInstalled
+                isInstalled = isInstalled,
+                gameId = appInfo.gameId
             )
+            
+            // Clear fresh install flag when status changes from VALIDATING to something else
+            LaunchedEffect(downloadStatus) {
+                if (downloadStatus != DownloadStatus.VALIDATING) {
+                    DownloadStateUtils.clearFreshInstall(appInfo.gameId)
+                }
+            }
             val statusColor = when {
                 downloadStatus != null || isInstalled -> MaterialTheme.colorScheme.tertiary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)

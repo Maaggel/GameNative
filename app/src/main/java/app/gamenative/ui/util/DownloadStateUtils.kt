@@ -55,6 +55,40 @@ fun StatusTextResource.asString(): String {
  */
 object DownloadStateUtils {
     /**
+     * Session-scoped set of game IDs that are fresh installs.
+     * This is cleared when the app is closed (not persistent).
+     */
+    private val freshInstalls = mutableSetOf<Int>()
+
+    /**
+     * Marks a game as a fresh install for the current session.
+     * This flag will be used to show "Starting" instead of "Validating" for fresh installs.
+     *
+     * @param gameId The game ID to mark as fresh install
+     */
+    fun markAsFreshInstall(gameId: Int) {
+        freshInstalls.add(gameId)
+    }
+
+    /**
+     * Clears the fresh install flag for a game.
+     *
+     * @param gameId The game ID to clear
+     */
+    fun clearFreshInstall(gameId: Int) {
+        freshInstalls.remove(gameId)
+    }
+
+    /**
+     * Checks if a game is marked as a fresh install.
+     *
+     * @param gameId The game ID to check
+     * @return true if the game is marked as a fresh install
+     */
+    fun isFreshInstall(gameId: Int): Boolean {
+        return freshInstalls.contains(gameId)
+    }
+    /**
      * Determines if a download is actively downloading.
      * A download is considered downloading ONLY if it's the actively downloading game.
      * Conditions:
@@ -250,20 +284,30 @@ object DownloadStateUtils {
      * @param downloadProgress The download progress (0.0 to 1.0)
      * @param isInstalled Whether the game is installed. If not provided, defaults to false
      *                    unless downloadStatus is COMPLETED (then defaults to true).
+     * @param gameId Optional game ID to check for fresh install status. If provided and
+     *               the game is a fresh install, "Starting" will be shown instead of "Validating".
      * @return The localized status text string
      */
     @Composable
     fun getDownloadStatusText(
         downloadStatus: DownloadStatus?,
         downloadProgress: Float,
-        isInstalled: Boolean? = null
+        isInstalled: Boolean? = null,
+        gameId: Int? = null
     ): String {
         val effectiveIsInstalled = isInstalled ?: (downloadStatus == DownloadStatus.COMPLETED)
         val statusTextRes = when {
             downloadStatus != null -> when (downloadStatus) {
                 DownloadStatus.QUEUED -> StatusTextResource(R.string.queued)
                 DownloadStatus.PAUSED -> StatusTextResource(R.string.paused)
-                DownloadStatus.VALIDATING -> StatusTextResource(R.string.validating)
+                DownloadStatus.VALIDATING -> {
+                    // Show "Starting" for fresh installs, "Validating" for resumed downloads
+                    if (gameId != null && isFreshInstall(gameId)) {
+                        StatusTextResource(R.string.starting_download)
+                    } else {
+                        StatusTextResource(R.string.validating)
+                    }
+                }
                 DownloadStatus.DOWNLOADING -> StatusTextResource(
                     R.string.installing_percent,
                     arrayOf(downloadProgress * 100)
@@ -294,7 +338,7 @@ object DownloadStateUtils {
     ): String {
         val downloadStatus = getGameDownloadStatus(gameId)
         val effectiveIsInstalled = isInstalled ?: (downloadStatus == DownloadStatus.COMPLETED)
-        return getDownloadStatusText(downloadStatus, downloadProgress, effectiveIsInstalled)
+        return getDownloadStatusText(downloadStatus, downloadProgress, effectiveIsInstalled, gameId)
     }
 }
 

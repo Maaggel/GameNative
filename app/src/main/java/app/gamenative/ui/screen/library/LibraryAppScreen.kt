@@ -497,6 +497,8 @@ fun AppScreen(
                     properties = mapOf(
                         "game_name" to appInfo.name
                     ))
+                // Mark as fresh install for this session
+                DownloadStateUtils.markAsFreshInstall(gameId)
                 CoroutineScope(Dispatchers.IO).launch {
                     downloadInfo = SteamService.downloadApp(gameId)
                     downloadProgress = 0f
