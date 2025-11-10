@@ -2,6 +2,7 @@ package app.gamenative.ui.util
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
+import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.data.DownloadInfo
 import app.gamenative.service.SteamService
@@ -88,6 +89,40 @@ object DownloadStateUtils {
     fun isFreshInstall(gameId: Int): Boolean {
         return freshInstalls.contains(gameId)
     }
+
+    /**
+     * Marks a game as manually paused (persistent across app restarts).
+     * This flag will be used to show "Paused" instead of "Queued".
+     *
+     * @param gameId The game ID to mark as manually paused
+     */
+    fun markAsManuallyPaused(gameId: Int) {
+        val currentSet = PrefManager.manuallyPausedGames.toMutableSet()
+        currentSet.add(gameId)
+        PrefManager.manuallyPausedGames = currentSet
+    }
+
+    /**
+     * Clears the manually paused flag for a game (persistent across app restarts).
+     * This should be called when a game resumes downloading.
+     *
+     * @param gameId The game ID to clear
+     */
+    fun clearManuallyPaused(gameId: Int) {
+        val currentSet = PrefManager.manuallyPausedGames.toMutableSet()
+        currentSet.remove(gameId)
+        PrefManager.manuallyPausedGames = currentSet
+    }
+
+    /**
+     * Checks if a game is marked as manually paused (persistent across app restarts).
+     *
+     * @param gameId The game ID to check
+     * @return true if the game is marked as manually paused
+     */
+    fun isManuallyPaused(gameId: Int): Boolean {
+        return PrefManager.manuallyPausedGames.contains(gameId)
+    }
     /**
      * Determines if a download is actively downloading.
      * A download is considered downloading ONLY if it's the actively downloading game.
@@ -172,6 +207,8 @@ object DownloadStateUtils {
     /**
      * Determines the download status based on current state.
      * Returns null if there's no download activity.
+     * 
+     * @param gameId Optional game ID to check for manually paused status
      */
     fun getDownloadStatus(
         downloadInfo: DownloadInfo?,
@@ -179,7 +216,8 @@ object DownloadStateUtils {
         isJobActive: Boolean,
         hasPartialDownload: Boolean,
         justResumed: Boolean = false,
-        isActivelyDownloading: Boolean = false
+        isActivelyDownloading: Boolean = false,
+        gameId: Int? = null
     ): DownloadStatus? {
         val isDownloading = isDownloading(downloadInfo, downloadProgress, isJobActive, isActivelyDownloading)
         val isValidating = isValidating(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, justResumed)
@@ -190,8 +228,15 @@ object DownloadStateUtils {
             downloadProgress >= 1f -> DownloadStatus.COMPLETED
             isValidating -> DownloadStatus.VALIDATING
             isDownloading -> DownloadStatus.DOWNLOADING
-            isQueued -> DownloadStatus.QUEUED  // Check queued before paused - if not actively downloading, it's queued
-            isPartiallyDownloaded -> DownloadStatus.PAUSED
+            isQueued -> DownloadStatus.QUEUED
+            // Only show PAUSED if it was manually paused, otherwise show QUEUED
+            isPartiallyDownloaded -> {
+                if (gameId != null && isManuallyPaused(gameId)) {
+                    DownloadStatus.PAUSED
+                } else {
+                    DownloadStatus.QUEUED
+                }
+            }
             downloadInfo != null && downloadProgress == 0f && !isJobActive -> DownloadStatus.QUEUED
             else -> null
         }
@@ -264,6 +309,8 @@ object DownloadStateUtils {
         // If the game is installed (has completion marker), it's definitely completed
         val isInstalled = SteamService.isAppInstalled(gameId)
         if (isInstalled) {
+            // Clear manually paused flag when game completes
+            clearManuallyPaused(gameId)
             return DownloadStatus.COMPLETED
         }
         
@@ -273,12 +320,18 @@ object DownloadStateUtils {
         val hasPartialDownload = SteamService.hasPartialDownload(gameId)
         val isActivelyDownloading = SteamService.isActivelyDownloading(gameId)
 
+        // Clear manually paused flag if download progress reaches 100%
+        if (downloadProgress >= 1f) {
+            clearManuallyPaused(gameId)
+        }
+
         return getDownloadStatus(
             downloadInfo = downloadInfo,
             downloadProgress = downloadProgress,
             isJobActive = isJobActive,
             hasPartialDownload = hasPartialDownload,
-            isActivelyDownloading = isActivelyDownloading
+            isActivelyDownloading = isActivelyDownloading,
+            gameId = gameId
         )
     }
 

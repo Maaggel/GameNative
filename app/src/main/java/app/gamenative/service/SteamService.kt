@@ -770,6 +770,9 @@ class SteamService : Service(), IChallengeUrlChanged {
             // Clear active download status if this was the active one
             clearActivelyDownloadingAppIdIfMatches(appId)
 
+            // Clear manually paused flag when app is deleted
+            app.gamenative.ui.util.DownloadStateUtils.clearManuallyPaused(appId)
+
             // Remove any download-complete marker
             MarkerUtils.removeMarker(getAppDirPath(appId), Marker.DOWNLOAD_COMPLETE_MARKER)
 

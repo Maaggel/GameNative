@@ -104,7 +104,7 @@ internal fun AppItem(
 
     /** Determine download status based on states **/
     val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading) {
-        DownloadStateUtils.getDownloadStatus(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading = isActivelyDownloading)
+        DownloadStateUtils.getDownloadStatus(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading = isActivelyDownloading, gameId = appInfo.gameId)
     }
 
     // Show overlay for downloading, paused, or queued states

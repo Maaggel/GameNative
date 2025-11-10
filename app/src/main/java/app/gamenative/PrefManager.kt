@@ -667,4 +667,20 @@ object PrefManager {
     var useAltNotificationIcon: Boolean
         get() = getPref(USE_ALT_NOTIFICATION_ICON, false)
         set(value) = setPref(USE_ALT_NOTIFICATION_ICON, value)
+
+    // Manually paused game IDs (persistent across app restarts)
+    private val MANUALLY_PAUSED_GAMES = stringPreferencesKey("manually_paused_games")
+    var manuallyPausedGames: Set<Int>
+        get() {
+            val value = getPref(MANUALLY_PAUSED_GAMES, "[]")
+            return try {
+                Json.decodeFromString<Set<String>>(value).mapNotNull { it.toIntOrNull() }.toSet()
+            } catch (e: Exception) {
+                emptySet()
+            }
+        }
+        set(value) {
+            val stringSet = value.map { it.toString() }.toSet()
+            setPref(MANUALLY_PAUSED_GAMES, Json.encodeToString(stringSet))
+        }
 }

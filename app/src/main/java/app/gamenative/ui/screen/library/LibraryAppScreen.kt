@@ -474,6 +474,8 @@ fun AppScreen(
                         "game_name" to appInfo.name
                     ))
                 downloadInfo?.cancel()
+                
+                DownloadStateUtils.clearManuallyPaused(gameId)
                 SteamService.deleteApp(gameId)
                 downloadInfo = null
                 downloadProgress = 0f
@@ -512,6 +514,8 @@ fun AppScreen(
             onConfirmClick = {
                 // Cancel download if it exists (for paused downloads)
                 downloadInfo?.cancel()
+                // Clear manually paused flag when deleting app
+                DownloadStateUtils.clearManuallyPaused(gameId)
                 // Delete the Steam app data
                 SteamService.deleteApp(gameId)
                 // Clear download state
@@ -664,7 +668,8 @@ fun AppScreen(
                         dismissBtnText = context.getString(R.string.no),
                     )
                 } else if (SteamService.hasPartialDownload(gameId)) {
-                    // Resume incomplete download
+                    // Resume incomplete download - clear manually paused flag
+                    DownloadStateUtils.clearManuallyPaused(gameId)
                     CoroutineScope(Dispatchers.IO).launch {
                         downloadInfo = SteamService.downloadApp(gameId)
                     }
@@ -687,13 +692,16 @@ fun AppScreen(
             onPauseResumeClick = {
                 if (isDownloading()) {
                     downloadInfo?.cancel()
+                    // Mark as manually paused
+                    DownloadStateUtils.markAsManuallyPaused(gameId)
 
                     // Don't set downloadInfo to null - keep it so we can detect paused state
                     // Update job state immediately
                     isJobActive = false
                     justResumed = false
                 } else {
-                    // Resume download - reset progress to 0 since validation starts from 0
+                    // Resume download - clear manually paused flag and reset progress to 0 since validation starts from 0
+                    DownloadStateUtils.clearManuallyPaused(gameId)
                     justResumed = true
                     downloadProgress = 0f
                     CoroutineScope(Dispatchers.IO).launch {
