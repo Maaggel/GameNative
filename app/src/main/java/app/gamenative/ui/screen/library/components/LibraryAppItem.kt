@@ -237,6 +237,10 @@ internal fun AppItem(
                         "https://shared.steamstatic.com/store_item_assets/steam/apps/" + appInfo.gameId + "/header.jpg"
                     }
 
+                    val isInstalled = remember(appInfo.appId) {
+                        SteamService.isAppInstalled(appInfo.gameId)
+                    }
+
                     /** Capsule/Hero view with download overlay **/
                     Box(modifier = Modifier.aspectRatio(aspectRatio)) {
                         ListItemImage(
@@ -251,14 +255,26 @@ internal fun AppItem(
 
                         // Download progress overlay for Capsule/Hero views
                         // Only show overlay when image is visible and we've delayed enough for it to load
-                        if (showDownloadOverlay && showOverlay && hideText && alpha > 0.5f) {
+                        if (!isInstalled && showDownloadOverlay && showOverlay && hideText && alpha > 0.5f) {
                             // Calculate overlay height: full height for queued/paused/validating, otherwise based on progress
                             val overlayHeight = when (downloadStatus) {
                                 DownloadStatus.QUEUED, DownloadStatus.PAUSED, DownloadStatus.VALIDATING -> 1f
                                 else -> 1f - downloadProgress
                             }
 
-                            // Show download status or percentage
+                            // Dark overlay background
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(overlayHeight)
+                                    .align(Alignment.TopStart)
+                                    .background(
+                                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.8f),
+                                        shape = RoundedCornerShape(3.dp) // Match image rounded corners
+                                    )
+                            )
+
+                            // Status text - centered in the full image area, not the overlay
                             val statusText = DownloadStateUtils.getDownloadStatusText(
                                 downloadStatus = downloadStatus,
                                 downloadProgress = downloadProgress,
@@ -268,13 +284,8 @@ internal fun AppItem(
 
                             Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight(overlayHeight)
-                                    .align(Alignment.TopStart)
-                                    .background(
-                                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.8f),
-                                        shape = RoundedCornerShape(3.dp) // Match image rounded corners
-                                    ),
+                                    .fillMaxSize()
+                                    .align(Alignment.Center),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
@@ -307,9 +318,6 @@ internal fun AppItem(
                             listRefreshTrigger = listRefreshTrigger,
                         )
                     } else {
-                        val isInstalled = remember(appInfo.appId) {
-                            SteamService.isAppInstalled(appInfo.gameId)
-                        }
                         // Cute floating icons for install status/family share
                         if (isInstalled || appInfo.isShared) {
                             Row(

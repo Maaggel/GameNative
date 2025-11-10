@@ -261,6 +261,12 @@ object DownloadStateUtils {
      * @return The download status, or null if there's no download activity
      */
     fun getGameDownloadStatus(gameId: Int): DownloadStatus? {
+        // If the game is installed (has completion marker), it's definitely completed
+        val isInstalled = SteamService.isAppInstalled(gameId)
+        if (isInstalled) {
+            return DownloadStatus.COMPLETED
+        }
+        
         val downloadInfo = SteamService.getAppDownloadInfo(gameId)
         val downloadProgress = downloadInfo?.getProgress() ?: 0f
         val isJobActive = downloadInfo?.isJobActive() ?: false
