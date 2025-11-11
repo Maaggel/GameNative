@@ -47,6 +47,7 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -101,6 +102,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import app.gamenative.service.SteamService.Companion.getAppDirPath
@@ -199,8 +201,12 @@ fun AppScreen(
     var justResumed by remember(appId) {
         mutableStateOf(false)
     }
-    val hasPartialDownload = remember(appId) {
-        SteamService.hasPartialDownload(gameId)
+    // Recalculate hasPartialDownload when downloadInfo changes or when we resume
+    // This ensures it's accurate when pausing/resuming downloads
+    val hasPartialDownload by remember(downloadInfo, justResumed, downloadProgress) {
+        derivedStateOf {
+            SteamService.hasPartialDownload(gameId)
+        }
     }
     var isInstalled by remember(appId) {
         mutableStateOf(SteamService.isAppInstalled(gameId))
@@ -210,26 +216,47 @@ fun AppScreen(
         mutableStateOf(appInfo.branches.isNotEmpty() && appInfo.depots.isNotEmpty())
     }
 
+    // Track isActivelyDownloading as state so changes trigger recomposition
+    var isActivelyDownloadingState by remember { mutableStateOf(SteamService.isActivelyDownloading(gameId)) }
+    
+    // Periodically check isActivelyDownloading to catch when download starts
+    LaunchedEffect(gameId) {
+        while (true) {
+            val current = SteamService.isActivelyDownloading(gameId)
+            if (current != isActivelyDownloadingState) {
+                isActivelyDownloadingState = current
+            }
+            // If actively downloading and progress has increased, clear justResumed
+            // This ensures the validating state disappears when download actually starts
+            if (current && justResumed && downloadProgress > 0.01f) {
+                justResumed = false
+            }
+            delay(500) // Check every 500ms
+        }
+    }
+    
     // Calculate all download states at once using DownloadStateUtils
-    val downloadStates: () -> DownloadStateUtils.DownloadStateFlags = {
-        val isActivelyDownloading = SteamService.isActivelyDownloading(gameId)
-        DownloadStateUtils.calculateDownloadStates(
-            downloadInfo = downloadInfo,
-            downloadProgress = downloadProgress,
-            isJobActive = isJobActive,
-            hasPartialDownload = hasPartialDownload,
-            isActivelyDownloading = isActivelyDownloading,
-            justResumed = justResumed
-        )
+    // Use derivedStateOf so Compose tracks dependencies and recomposes when they change
+    val downloadStates by remember(downloadInfo, downloadProgress, isJobActive, justResumed, isActivelyDownloadingState) {
+        derivedStateOf {
+            DownloadStateUtils.calculateDownloadStates(
+                downloadInfo = downloadInfo,
+                downloadProgress = downloadProgress,
+                isJobActive = isJobActive,
+                hasPartialDownload = hasPartialDownload,
+                isActivelyDownloading = isActivelyDownloadingState,
+                justResumed = justResumed
+            )
+        }
     }
 
     // Convenience functions for individual states
-    val isDownloading: () -> Boolean = { downloadStates().isDownloading }
-    val isValidating: () -> Boolean = { downloadStates().isValidating }
-    val isStartingDownload: () -> Boolean = { downloadStates().isStartingDownload }
-    val isQueued: () -> Boolean = { downloadStates().isQueued }
-    val isPartiallyDownloaded: () -> Boolean = { downloadStates().isPartiallyDownloaded }
-    val isActivelyDownloading: () -> Boolean = { downloadStates().isActivelyDownloading }
+    val isDownloading: Boolean = downloadStates.isDownloading
+    val isValidating: Boolean = downloadStates.isValidating
+    val isStartingDownload: Boolean = downloadStates.isStartingDownload
+    val isQueued: Boolean = downloadStates.isQueued
+    val isPartiallyDownloaded: Boolean = downloadStates.isPartiallyDownloaded
+    val isActivelyDownloading: Boolean = downloadStates.isActivelyDownloading
 
     var loadingDialogVisible by rememberSaveable { mutableStateOf(false) }
     var loadingProgress by rememberSaveable { mutableFloatStateOf(0f) }
@@ -277,36 +304,64 @@ fun AppScreen(
                 justResumed = false
             }
 
-            // If we just resumed and progress is still low, keep it at 0 to show validating
-            if (justResumed && it <= 0.01f) {
-                downloadProgress = 0f
-            } else {
-                downloadProgress = it
+            // Always update progress - don't block it
+            downloadProgress = it
 
-                // Once progress increases, validation is done
+            // Check if download has actually started (isActivelyDownloading)
+            val isActivelyDownloading = SteamService.isActivelyDownloading(gameId)
+            if (isActivelyDownloading) {
+                isActivelyDownloadingState = true
+                // Once we're actively downloading AND progress has increased meaningfully, validation is done
                 if (justResumed && it > 0.01f) {
                     justResumed = false
+                }
+            } else {
+                // If not actively downloading, keep justResumed if progress is still very low (still validating)
+                if (it > 0.01f) {
+                    // Progress increased but not actively downloading - might be between validation and download
+                    // Keep justResumed for now, it will be cleared when download actually starts
                 }
             }
 
             // Update job state when progress changes
-            isJobActive = downloadInfo?.isJobActive() ?: false
+            val newJobActive = downloadInfo?.isJobActive() ?: false
+            isJobActive = newJobActive
+            
+            // If job becomes inactive, clear actively downloading state
+            if (!newJobActive) {
+                isActivelyDownloadingState = false
+            }
         }
 
         // Update state immediately when downloadInfo changes
         downloadInfo?.let {
             val currentProgress = it.getProgress()
-            // If we just resumed and progress is still low, keep it at 0 to show validating
-            if (justResumed && currentProgress <= 0.01f) {
-                downloadProgress = 0f
-            } else {
-                downloadProgress = currentProgress
-                // Once progress increases, validation is done
+            val newJobActive = it.isJobActive()
+            
+            // Always update progress
+            downloadProgress = currentProgress
+            
+            // Check if download has actually started (isActivelyDownloading)
+            val isActivelyDownloading = SteamService.isActivelyDownloading(gameId)
+            if (isActivelyDownloading) {
+                isActivelyDownloadingState = true
+                // Once we're actively downloading AND progress has increased meaningfully, validation is done
                 if (justResumed && currentProgress > 0.01f) {
                     justResumed = false
                 }
             }
-            isJobActive = it.isJobActive()
+            
+            isJobActive = newJobActive
+            
+            // If job is inactive, clear actively downloading state
+            if (!newJobActive) {
+                isActivelyDownloadingState = false
+            }
+        } ?: run {
+            // If downloadInfo is null, clear all download-related state
+            isJobActive = false
+            isActivelyDownloadingState = false
+            justResumed = false
         }
 
         downloadInfo?.addProgressListener(onDownloadProgress)
@@ -473,12 +528,32 @@ fun AppScreen(
                     properties = mapOf(
                         "game_name" to appInfo.name
                     ))
-                downloadInfo?.cancel()
+                // Cancel download first, then delete
+                try {
+                    downloadInfo?.cancel()
+                } catch (e: Exception) {
+                    // Ignore exceptions during cancellation - semaphore bugs can occur
+                    Timber.w(e, "Exception during download cancellation")
+                }
                 
                 DownloadStateUtils.clearManuallyPaused(gameId)
-                SteamService.deleteApp(gameId)
+                
+                // Update state immediately so buttons disappear
                 downloadInfo = null
                 downloadProgress = 0f
+                isJobActive = false
+                justResumed = false
+                isActivelyDownloadingState = false
+                
+                // Delete app in background to avoid blocking UI
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        SteamService.deleteApp(gameId)
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error deleting app $gameId")
+                    }
+                }
+                
                 isInstalled = SteamService.isAppInstalled(gameId)
                 msgDialogState = MessageDialogState(false)
             }
@@ -513,19 +588,41 @@ fun AppScreen(
         DialogType.DELETE_APP -> {
             onConfirmClick = {
                 // Cancel download if it exists (for paused downloads)
-                downloadInfo?.cancel()
+                try {
+                    downloadInfo?.cancel()
+                } catch (e: Exception) {
+                    // Ignore exceptions during cancellation - semaphore bugs can occur
+                    Timber.w(e, "Exception during download cancellation")
+                }
+                
                 // Clear manually paused flag when deleting app
                 DownloadStateUtils.clearManuallyPaused(gameId)
-                // Delete the Steam app data
-                SteamService.deleteApp(gameId)
-                // Clear download state
+                
+                // Update state immediately so buttons disappear
                 downloadInfo = null
                 downloadProgress = 0f
-                // Also delete the associated container so it will be recreated on next launch
-                ContainerUtils.deleteContainer(context, appId)
+                isJobActive = false
+                justResumed = false
+                isActivelyDownloadingState = false
+                
+                // Delete the Steam app data in background to avoid blocking UI
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        SteamService.deleteApp(gameId)
+                        // Also delete the associated container so it will be recreated on next launch
+                        withContext(Dispatchers.Main) {
+                            ContainerUtils.deleteContainer(context, appId)
+                            isInstalled = SteamService.isAppInstalled(gameId)
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error deleting app $gameId")
+                        withContext(Dispatchers.Main) {
+                            isInstalled = SteamService.isAppInstalled(gameId)
+                        }
+                    }
+                }
+                
                 msgDialogState = MessageDialogState(false)
-
-                isInstalled = SteamService.isAppInstalled(gameId)
             }
             onDismissRequest = { msgDialogState = MessageDialogState(false) }
             onDismissClick = { msgDialogState = MessageDialogState(false) }
@@ -650,14 +747,14 @@ fun AppScreen(
             appInfo = appInfo,
             isInstalled = isInstalled,
             isValidToDownload = isValidToDownload,
-            isDownloading = isDownloading(),
-            isStartingDownload = isStartingDownload(),
-            isValidating = isValidating(),
-            isQueued = isQueued(),
-            isPartiallyDownloaded = isPartiallyDownloaded(),
+            isDownloading = isDownloading,
+            isStartingDownload = isStartingDownload,
+            isValidating = isValidating,
+            isQueued = isQueued,
+            isPartiallyDownloaded = isPartiallyDownloaded,
             downloadProgress = downloadProgress,
             onDownloadInstallClick = {
-                if (isDownloading()) {
+                if (isDownloading) {
                     // Prompt to cancel ongoing download
                     msgDialogState = MessageDialogState(
                         visible = true,
@@ -690,36 +787,54 @@ fun AppScreen(
                 }
             },
             onPauseResumeClick = {
-                if (isDownloading()) {
-                    downloadInfo?.cancel()
+                if (isDownloading) {
+                    try {
+                        downloadInfo?.cancel()
+                    } catch (e: Exception) {
+                        // Ignore exceptions during cancellation - semaphore bugs can occur
+                        Timber.w(e, "Exception during download cancellation in pause")
+                    }
                     // Mark as manually paused
                     DownloadStateUtils.markAsManuallyPaused(gameId)
 
                     // Don't set downloadInfo to null - keep it so we can detect paused state
-                    // Update job state immediately
+                    // Update job state immediately so buttons disappear
                     isJobActive = false
                     justResumed = false
+                    isActivelyDownloadingState = false
                 } else {
                     // Resume download - clear manually paused flag and reset progress to 0 since validation starts from 0
                     DownloadStateUtils.clearManuallyPaused(gameId)
                     justResumed = true
                     downloadProgress = 0f
+                    // Set isJobActive immediately to show validating state right away
+                    // Keep the old downloadInfo temporarily - isValidating() will use our updated isJobActive flag
+                    isJobActive = true
                     CoroutineScope(Dispatchers.IO).launch {
-                        downloadInfo = SteamService.downloadApp(gameId)
-
+                        val newDownloadInfo = SteamService.downloadApp(gameId)
+                        
                         // Update state immediately after getting new downloadInfo
                         withContext(Dispatchers.Main) {
-                            isJobActive = downloadInfo?.isJobActive() ?: false
+                            downloadInfo = newDownloadInfo
+                            isJobActive = newDownloadInfo?.isJobActive() ?: false
 
                             // If progress is still 0 or very low, we're validating
-                            val currentProgress = downloadInfo?.getProgress() ?: 0f
+                            val currentProgress = newDownloadInfo?.getProgress() ?: 0f
                             if (currentProgress <= 0.01f) {
                                 // Keep progress at 0 to show validating state
                                 downloadProgress = 0f
+                                // Keep justResumed = true so isValidating() returns true
                             } else {
                                 // Progress has increased, validation is done
                                 downloadProgress = currentProgress
                                 justResumed = false
+                            }
+                            
+                            // Also check if download has actually started (isActivelyDownloading)
+                            // If it has, clear justResumed even if progress is still low
+                            if (SteamService.isActivelyDownloading(gameId)) {
+                                justResumed = false
+                                isActivelyDownloadingState = true
                             }
                         }
                     }
@@ -728,7 +843,7 @@ fun AppScreen(
             onDeleteDownloadClick = {
                 // If download is active (downloading, starting, validating, or queued), show cancel dialog
                 // Otherwise (paused), show delete dialog
-                val isActive = isDownloading() || isStartingDownload() || isValidating() || isQueued()
+                val isActive = isDownloading || isStartingDownload || isValidating || isQueued
                 if (isActive) {
                     msgDialogState = MessageDialogState(
                         visible = true,
@@ -1203,8 +1318,8 @@ private fun AppScreenContent(
                         Text(
                             text = when {
                                 isQueued -> stringResource(R.string.queued)
+                                isValidating -> stringResource(R.string.validating) // Check validating before starting
                                 isStartingDownload -> stringResource(R.string.starting_download)
-                                isValidating -> stringResource(R.string.validating)
                                 isDownloading -> stringResource(R.string.pause_download)
                                 else -> stringResource(R.string.resume_download)
                             },

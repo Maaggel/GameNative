@@ -45,6 +45,9 @@ class LibraryViewModel @Inject constructor(
 
     // Complete and unfiltered app list
     private var appList: List<SteamApp> = emptyList()
+    
+    // Track if we've already attempted to resume the queue on first load
+    private var hasResumedQueueOnFirstLoad = false
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -58,6 +61,13 @@ class LibraryViewModel @Inject constructor(
                     appList = apps
 
                     onFilterApps(paginationCurrentPage)
+                    
+                    // Resume queued downloads on first app data load after login (if setting is enabled)
+                    // This ensures the library list is available before checking for queued games
+                    if (!hasResumedQueueOnFirstLoad && apps.isNotEmpty()) {
+                        hasResumedQueueOnFirstLoad = true
+                        SteamService.resumeQueueOnStartIfNeeded()
+                    }
                 }
             }
         }

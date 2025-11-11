@@ -697,10 +697,17 @@ fun PluviaMain(
                     viewModel.viewModelScope.launch {
                         Timber.d("GameFeedback: Inside coroutine scope")
                         try {
+                            val supabase = PluviaApp.supabase
+                            if (supabase == null) {
+                                Timber.w("GameFeedback: Supabase not initialized, skipping feedback submission")
+                                viewModel.showToast("Feedback submission unavailable (Supabase not configured)")
+                                return@launch
+                            }
+                            
                             Timber.d("GameFeedback: Calling submitGameFeedback with rating=${feedbackState.rating}")
                             val result = GameFeedbackUtils.submitGameFeedback(
                                 context = context,
-                                supabase = PluviaApp.supabase,
+                                supabase = supabase,
                                 appId = appId,
                                 rating = feedbackState.rating,
                                 tags = feedbackState.selectedTags.toList(),

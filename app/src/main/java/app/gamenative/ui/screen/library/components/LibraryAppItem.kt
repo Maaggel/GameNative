@@ -42,10 +42,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -60,6 +62,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.gamenative.PrefManager
 import app.gamenative.R
+import app.gamenative.data.DownloadInfo
 import app.gamenative.data.LibraryItem
 import app.gamenative.service.DownloadService
 import app.gamenative.service.SteamService
@@ -103,8 +106,13 @@ internal fun AppItem(
     var isActivelyDownloading by remember { mutableStateOf(SteamService.isActivelyDownloading(appInfo.gameId)) }
 
     /** Determine download status based on states **/
+    // Check isActivelyDownloading directly instead of using state variable to avoid stale values
+    // Also refresh downloadInfo to catch when a download starts (e.g., from startNextQueuedGame)
     val downloadStatus = remember(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading) {
-        DownloadStateUtils.getDownloadStatus(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading = isActivelyDownloading, gameId = appInfo.gameId)
+        // Get fresh downloadInfo in case it was just created (e.g., by startNextQueuedGame)
+        val currentDownloadInfo = SteamService.getAppDownloadInfo(appInfo.gameId) ?: downloadInfo
+        val currentIsActivelyDownloading = SteamService.isActivelyDownloading(appInfo.gameId)
+        DownloadStateUtils.getDownloadStatus(currentDownloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading = currentIsActivelyDownloading, gameId = appInfo.gameId)
     }
 
     // Show overlay for downloading, paused, or queued states
@@ -137,6 +145,18 @@ internal fun AppItem(
             if (currentDownloadInfo != null) {
                 refreshProgress()
             }
+        }
+    }
+    
+    // Periodically check isActivelyDownloading status to catch when download starts
+    // This ensures we update immediately when a download becomes active, even if downloadInfo hasn't changed yet
+    LaunchedEffect(appInfo.gameId) {
+        while (true) {
+            val currentIsActivelyDownloading = SteamService.isActivelyDownloading(appInfo.gameId)
+            if (currentIsActivelyDownloading != isActivelyDownloading) {
+                isActivelyDownloading = currentIsActivelyDownloading
+            }
+            delay(500) // Check every 500ms
         }
     }
 
@@ -294,7 +314,7 @@ internal fun AppItem(
                                         .fillMaxWidth()
                                         .padding(8.dp),
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                    style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.Bold,
                                         shadow = androidx.compose.ui.graphics.Shadow(
                                             color = androidx.compose.ui.graphics.Color.Black,
@@ -380,7 +400,11 @@ internal fun GameInfoBlock(
     // For text displayed in list view, or as override if image loading fails
 
     // Get download info for progress tracking
-    val downloadInfo = remember(appInfo.appId) { SteamService.getAppDownloadInfo(appInfo.gameId) }
+    // Include downloadInfoRefreshTrigger so it refreshes when a download starts
+    var downloadInfoRefreshTrigger by remember { mutableIntStateOf(0) }
+    val downloadInfo = remember(appInfo.appId, downloadInfoRefreshTrigger) { 
+        SteamService.getAppDownloadInfo(appInfo.gameId) 
+    }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var isJobActive by remember { mutableStateOf(false) }
     val isInstalled = remember(appInfo.appId) {
@@ -388,8 +412,17 @@ internal fun GameInfoBlock(
     }
 
     /** Determine download status using consolidated function **/
-    val downloadStatus = remember(appInfo.gameId, downloadInfo, downloadProgress, listRefreshTrigger) {
-        DownloadStateUtils.getGameDownloadStatus(appInfo.gameId)
+    // Track isActivelyDownloading state to trigger recomposition when it changes
+    var isActivelyDownloading by remember { mutableStateOf(SteamService.isActivelyDownloading(appInfo.gameId)) }
+    
+    val downloadStatus = remember(appInfo.gameId, downloadInfo, downloadProgress, isJobActive, listRefreshTrigger, isActivelyDownloading, downloadInfoRefreshTrigger) {
+        // Get fresh values to ensure we have the latest state
+        val currentDownloadInfo = downloadInfo ?: SteamService.getAppDownloadInfo(appInfo.gameId)
+        val currentIsActivelyDownloading = SteamService.isActivelyDownloading(appInfo.gameId)
+        // Get fresh progress and job state from currentDownloadInfo if available
+        val currentProgress = currentDownloadInfo?.getProgress() ?: downloadProgress
+        val currentIsJobActive = currentDownloadInfo?.isJobActive() ?: isJobActive
+        DownloadStateUtils.getDownloadStatus(currentDownloadInfo, currentProgress, currentIsJobActive, SteamService.hasPartialDownload(appInfo.gameId), isActivelyDownloading = currentIsActivelyDownloading, gameId = appInfo.gameId)
     }
 
     // Function to refresh progress from downloadInfo - can be called from remember and LaunchedEffect
@@ -400,7 +433,7 @@ internal fun GameInfoBlock(
     }
 
     // Initialize progress when component is created or downloadInfo changes
-    remember(downloadInfo) {
+    remember(downloadInfo, downloadInfoRefreshTrigger) {
         refreshProgress()
     }
 
@@ -414,6 +447,55 @@ internal fun GameInfoBlock(
             val currentDownloadInfo = SteamService.getAppDownloadInfo(appInfo.gameId)
             if (currentDownloadInfo != null) {
                 refreshProgress()
+            }
+        }
+    }
+    
+    // Periodically check isActivelyDownloading and downloadInfo to catch when download starts
+    // This ensures we update immediately when startNextQueuedGame() starts a download
+    LaunchedEffect(appInfo.gameId) {
+        var lastCheckedDownloadInfo: DownloadInfo? = null
+        while (true) {
+            val currentIsActivelyDownloading = SteamService.isActivelyDownloading(appInfo.gameId)
+            val freshDownloadInfo = SteamService.getAppDownloadInfo(appInfo.gameId)
+            
+            // Update isActivelyDownloading if it changed
+            val wasActivelyDownloading = isActivelyDownloading
+            if (currentIsActivelyDownloading != isActivelyDownloading) {
+                isActivelyDownloading = currentIsActivelyDownloading
+                
+                // If download just became active, immediately refresh downloadInfo
+                if (currentIsActivelyDownloading && !wasActivelyDownloading) {
+                    downloadInfoRefreshTrigger++
+                    // Also update progress immediately if we have downloadInfo
+                    if (freshDownloadInfo != null) {
+                        val state = DownloadStateUtils.refreshProgress(freshDownloadInfo)
+                        downloadProgress = state.downloadProgress
+                        isJobActive = state.isJobActive
+                    }
+                }
+            }
+            
+            // Check if downloadInfo was created or changed (e.g., by startNextQueuedGame)
+            // Compare against lastCheckedDownloadInfo to detect changes even if downloadInfo remember hasn't updated yet
+            if (freshDownloadInfo != null) {
+                if (lastCheckedDownloadInfo == null || freshDownloadInfo != lastCheckedDownloadInfo) {
+                    // DownloadInfo was created or changed, trigger refresh
+                    lastCheckedDownloadInfo = freshDownloadInfo
+                    downloadInfoRefreshTrigger++
+                    val state = DownloadStateUtils.refreshProgress(freshDownloadInfo)
+                    downloadProgress = state.downloadProgress
+                    isJobActive = state.isJobActive
+                }
+            } else {
+                lastCheckedDownloadInfo = null
+            }
+            
+            // Check more frequently if actively downloading to catch status changes faster
+            if (currentIsActivelyDownloading) {
+                delay(200) // Check every 200ms when actively downloading
+            } else {
+                delay(500) // Check every 500ms otherwise
             }
         }
     }
@@ -499,7 +581,7 @@ internal fun GameInfoBlock(
                 Text(
                     modifier = Modifier.padding(start = 8.dp),
                     text = statusText,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = statusColor
                 )
                 // Download percentage when downloading (not paused or queued)
@@ -507,7 +589,7 @@ internal fun GameInfoBlock(
                     Text(
                         modifier = Modifier.padding(start = 8.dp),
                         text = String.format("%.1f%%", downloadProgress * 100),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = statusColor
                     )
                 }

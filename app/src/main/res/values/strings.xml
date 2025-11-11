@@ -144,6 +144,8 @@
     <string name="settings_downloads">Downloads</string>
     <string name="settings_download_wifi_only">Download only over Wi-Fi</string>
     <string name="settings_download_wifi_only_subtitle">Prevent downloads on cellular data</string>
+    <string name="settings_resume_queue_on_start">Resume queue upon startup</string>
+    <string name="settings_resume_queue_on_start_subtitle">Automatically resume queued downloads when the app starts</string>
     <string name="settings_write_external_storage">Write to external storage</string>
     <string name="settings_no_external_storage">No external storage detected</string>
     <string name="settings_save_games_external">Save games to external storage</string>
@@ -208,6 +210,7 @@
     <string name="paused">Paused</string>
     <string name="downloading_status">Downloading</string>
     <string name="installing_percent">Installing %1$.1f%%</string>
+    <string name="downloading_percent">Downloading %1$.1f%%</string>
     <string name="not_installed_status">Not installed</string>
     <string name="family_shared">Family Shared</string>
 </resources>

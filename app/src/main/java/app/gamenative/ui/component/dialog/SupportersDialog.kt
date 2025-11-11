@@ -37,6 +37,7 @@ import app.gamenative.utils.KofiSupporter
 import app.gamenative.utils.fetchKofiSupporters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 @Composable
 fun SupportersDialog(
@@ -51,7 +52,13 @@ fun SupportersDialog(
     LaunchedEffect(Unit) {
         isLoading = true
         val data = withContext(Dispatchers.IO) {
-            fetchKofiSupporters(PluviaApp.supabase)
+            val supabase = PluviaApp.supabase
+            if (supabase == null) {
+                Timber.w("SupportersDialog: Supabase not initialized, skipping supporters fetch")
+                emptyList()
+            } else {
+                fetchKofiSupporters(supabase)
+            }
         }
         supporters = data
         isLoading = false

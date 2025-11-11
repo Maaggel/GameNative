@@ -171,6 +171,18 @@ fun SettingsGroupInterface(
                 PrefManager.downloadOnWifiOnly = it
             },
         )
+
+        var resumeQueueOnStart by rememberSaveable { mutableStateOf(PrefManager.resumeQueueOnStart) }
+        SettingsSwitch(
+            colors = settingsTileColorsAlt(),
+            title = { Text(text = stringResource(R.string.settings_resume_queue_on_start)) },
+            subtitle = { Text(text = stringResource(R.string.settings_resume_queue_on_start_subtitle)) },
+            state = resumeQueueOnStart,
+            onCheckedChange = {
+                resumeQueueOnStart = it
+                PrefManager.resumeQueueOnStart = it
+            },
+        )
         val ctx = LocalContext.current
         val sm = ctx.getSystemService(StorageManager::class.java)
 

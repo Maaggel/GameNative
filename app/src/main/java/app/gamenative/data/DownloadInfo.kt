@@ -14,7 +14,12 @@ data class DownloadInfo(
     private var weightSum  = jobCount.toFloat()
 
     fun cancel() {
-        downloadJob?.cancel(CancellationException("Cancelled by user"))
+        try {
+            downloadJob?.cancel(CancellationException("Cancelled by user"))
+        } catch (e: Exception) {
+            // Ignore exceptions during cancellation - they're expected when cancelling downloads
+            // The ContentDownloader may throw semaphore errors during cleanup, but we can't prevent that
+        }
     }
 
     fun setDownloadJob(job: Job) {

@@ -41,6 +41,7 @@ import app.gamenative.events.AndroidEvent
 import app.gamenative.events.SteamEvent
 import app.gamenative.service.callback.EmoticonListCallback
 import app.gamenative.service.handler.PluviaHandler
+import app.gamenative.ui.util.DownloadStateUtils
 import app.gamenative.utils.SteamUtils
 import app.gamenative.utils.generateSteamApp
 import com.google.android.play.core.ktx.bytesDownloaded
@@ -110,7 +111,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.Collections
 import java.util.EnumSet
-import java.util.concurrent.CancellationException
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlin.io.path.pathString
@@ -130,6 +131,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.isActive
@@ -270,7 +272,10 @@ class SteamService : Service(), IChallengeUrlChanged {
         private var instance: SteamService? = null
 
         private val downloadJobs = ConcurrentHashMap<Int, DownloadInfo>()
-        
+
+        // Track if we've already attempted to resume the queue on startup (only once per session)
+        private var hasResumedQueueOnStart = false
+
         // Track which appId is actively downloading (only one at a time)
         @Volatile
         private var activelyDownloadingAppId: Int? = null
@@ -765,7 +770,12 @@ class SteamService : Service(), IChallengeUrlChanged {
 
         fun deleteApp(appId: Int): Boolean {
             // Cancel and remove any active download
-            downloadJobs[appId]?.cancel()
+            try {
+                downloadJobs[appId]?.cancel()
+            } catch (e: Exception) {
+                // Ignore exceptions during cancellation - semaphore bugs can occur in ContentDownloader
+                Timber.w(e, "Exception during download cancellation in deleteApp for $appId")
+            }
             downloadJobs.remove(appId)
             // Clear active download status if this was the active one
             clearActivelyDownloadingAppIdIfMatches(appId)
@@ -801,6 +811,81 @@ class SteamService : Service(), IChallengeUrlChanged {
             return getAppInfoOf(appId)?.let { appInfo ->
                 Timber.i("App contains ${appInfo.depots.size} depot(s): ${appInfo.depots.keys}")
                 downloadApp(appId, getDownloadableDepots(appId).keys.toList(), "public")
+            }
+        }
+
+        /**
+         * Resume queued downloads on first app data load after login (if setting is enabled).
+         * This should be called when the library list is done loading.
+         */
+        fun resumeQueueOnStartIfNeeded() {
+            if (PrefManager.resumeQueueOnStart && !hasResumedQueueOnStart) {
+                Timber.tag("Mix").d("Resume queue on start: ${PrefManager.resumeQueueOnStart} and hasResumedQueueOnStart: $hasResumedQueueOnStart")
+                
+                hasResumedQueueOnStart = true
+                instance?.let {
+                    it.scope.launch {
+                        // Small delay to ensure database transaction is committed
+                        delay(300)
+                        startNextQueuedGame()
+                    }
+                }
+            }
+        }
+
+        /**
+         * Starts the next queued game download if there is one available.
+         * A game is considered queued if it has a partial download but is not actively downloading.
+         */
+        private fun startNextQueuedGame() {
+            // Don't start if there's already an active download
+            if (activelyDownloadingAppId != null) {
+                return
+            }
+
+            // Check downloadJobs for games that aren't actively downloading
+            // These are games that were started but paused/queued
+            // Exclude manually paused games - they should only resume when user explicitly resumes them
+            val queuedGameId = downloadJobs.keys.firstOrNull { gameId ->
+                DownloadStateUtils.isGameAvailableForAutostart(gameId)
+            }
+
+            if (queuedGameId != null) {
+                Timber.i("Auto-starting next queued game: $queuedGameId")
+                instance?.let {
+                    it.scope.launch {
+                        downloadApp(queuedGameId)
+                    }
+                }
+            } else {
+                // Check for games with partial downloads that aren't in downloadJobs yet
+                // This handles cases where the app was restarted and downloadJobs was cleared,
+                // but partial downloads remain on disk and should be auto-resumed
+                val partialDownloadGameId = runBlocking(Dispatchers.IO) {
+                    try {
+                        instance?.appDao?.getAllOwnedApps()?.first()?.mapNotNull { app ->
+                            val gameId = app.id
+                            if (downloadJobs[gameId] == null &&
+                                DownloadStateUtils.isGameAvailableForAutostart(gameId)) {
+                                gameId
+                            } else {
+                                null
+                            }
+                        }?.firstOrNull()
+                    } catch (e: Exception) {
+                        Timber.w(e, "Error checking for queued games")
+                        null
+                    }
+                }
+
+                if (partialDownloadGameId != null) {
+                    Timber.i("Auto-starting next queued game with partial download: $partialDownloadGameId")
+                    instance?.let {
+                        it.scope.launch {
+                            downloadApp(partialDownloadGameId)
+                        }
+                    }
+                }
             }
         }
 
@@ -999,29 +1084,53 @@ class SteamService : Service(), IChallengeUrlChanged {
                                     Timber.i("Downloading game to " + defaultAppInstallPath)
 
                                     success = retry(times = 5, backoffMs = 3_000) {
-                                        ContentDownloader(instance!!.steamClient!!)
-                                            .downloadApp(
-                                                appId         = appId,
-                                                depotId       = depotId,
-                                                installPath   = defaultAppInstallPath,
-                                                stagingPath   = defaultAppStagingPath,
-                                                branch        = branch,
-                                                maxDownloads  = CHUNKS_PER_DEPOT,
-                                                onDownloadProgress = { p ->
-                                                    val now = SystemClock.elapsedRealtime()
-                                                    if (now - lastEmit >= MIN_INTERVAL_MS || p >= 1f) {
-                                                        lastEmit = now
-                                                        di.setProgress(p, idx)
-                                                    }
-                                                },
-                                                parentScope   = this,
-                                            ).await()
+                                        // Check for cancellation before starting download
+                                        ensureActive()
+                                        
+                                        try {
+                                            ContentDownloader(instance!!.steamClient!!)
+                                                .downloadApp(
+                                                    appId         = appId,
+                                                    depotId       = depotId,
+                                                    installPath   = defaultAppInstallPath,
+                                                    stagingPath   = defaultAppStagingPath,
+                                                    branch        = branch,
+                                                    maxDownloads  = CHUNKS_PER_DEPOT,
+                                                    onDownloadProgress = { p ->
+                                                        val now = SystemClock.elapsedRealtime()
+                                                        if (now - lastEmit >= MIN_INTERVAL_MS || p >= 1f) {
+                                                            lastEmit = now
+                                                            di.setProgress(p, idx)
+                                                        }
+                                                    },
+                                                    parentScope   = this,
+                                                ).await()
+                                        } catch (e: java.io.FileNotFoundException) {
+                                            // FileNotFoundException can occur if ContentDownloader tries to access a file
+                                            // that doesn't exist yet. This is a retryable error - the file should be created.
+                                            Timber.w(e, "FileNotFoundException during download for depot $depotId - will retry")
+                                            throw e  // Re-throw to trigger retry
+                                        }
                                     }
                                     if (success) di.setProgress(1f, idx)
                                     else {
                                         Timber.w("Depot $depotId skipped after retries")
                                         di.setWeight(idx, 0)
                                         di.setProgress(1f, idx)
+                                    }
+                                } catch (e: CancellationException) {
+                                    // Download was cancelled - this is expected, just log and exit
+                                    Timber.d("Download of depot $depotId for app $appId was cancelled")
+                                    throw e  // Re-throw to properly propagate cancellation
+                                } catch (e: IllegalStateException) {
+                                    // Catch semaphore errors that escape the retry block
+                                    if (e.message?.contains("released permits cannot be greater") == true) {
+                                        Timber.e(e, "Semaphore release issue in ContentDownloader for depot $depotId - marking as failed")
+                                        di.setWeight(idx, 0)
+                                        di.setProgress(1f, idx)
+                                        success = false
+                                    } else {
+                                        throw e  // Re-throw other IllegalStateExceptions
                                     }
                                 } finally {
                                     depotGate.release()
@@ -1063,6 +1172,9 @@ class SteamService : Service(), IChallengeUrlChanged {
 
                     // Clear active download status when complete
                     clearActivelyDownloadingAppIdIfMatches(appId)
+
+                    // Automatically start the next queued game if available
+                    startNextQueuedGame()
                 }
             }
             return info
@@ -1076,16 +1188,40 @@ class SteamService : Service(), IChallengeUrlChanged {
         ): Boolean {
             repeat(times - 1) { attempt ->
                 try {
+                    // Check for cancellation by attempting a delay(0) which respects cancellation
+                    delay(0)
+                    
                     if (block()) return true
 
                     // Block returned false, retry
                     Timber.w("Download attempt ${attempt + 1}/$times returned false, retrying")
+                } catch (e: CancellationException) {
+                    // If cancelled, stop retrying immediately and propagate the cancellation
+                    Timber.d("Download retry cancelled at attempt ${attempt + 1}/$times")
+                    throw e
                 } catch (e: java.net.SocketTimeoutException) {
                     // For timeout errors, use longer backoff with exponential increase
                     val timeoutBackoff = if (backoffMs > 0) backoffMs * (attempt + 1) * 2 else 5_000L * (attempt + 1)
                     Timber.w("Download timeout (attempt ${attempt + 1}/$times), retrying in ${timeoutBackoff}ms")
                     delay(timeoutBackoff)
                     return@repeat
+                } catch (e: java.io.FileNotFoundException) {
+                    // FileNotFoundException - file might not exist yet, retry after a short delay
+                    Timber.w("FileNotFoundException (attempt ${attempt + 1}/$times): ${e.message}")
+                    if (backoffMs > 0) delay(backoffMs * (attempt + 1))
+                    return@repeat
+                } catch (e: IllegalStateException) {
+                    // Handle semaphore release bug in JavaSteam's ContentDownloader
+                    // This can happen during cleanup when other exceptions occur
+                    if (e.message?.contains("released permits cannot be greater") == true) {
+                        Timber.w(e, "Semaphore release bug in ContentDownloader (attempt ${attempt + 1}/$times) - will retry")
+                        // Don't retry immediately - this is a library bug, just continue to next attempt
+                        if (backoffMs > 0) delay(backoffMs * (attempt + 1))
+                        return@repeat
+                    } else {
+                        // Re-throw other IllegalStateExceptions
+                        throw e
+                    }
                 } catch (e: Exception) {
                     Timber.w("Download error (attempt ${attempt + 1}/$times): ${e.message}")
                     if (backoffMs > 0) delay(backoffMs * (attempt + 1))
@@ -1093,9 +1229,23 @@ class SteamService : Service(), IChallengeUrlChanged {
                 }
                 if (backoffMs > 0) delay(backoffMs * (attempt + 1))
             }
-            // Final attempt
+            // Final attempt - check for cancellation before final try
+            try {
+                delay(0) // Check for cancellation
+            } catch (e: CancellationException) {
+                Timber.d("Download retry cancelled before final attempt")
+                throw e
+            }
             return try {
                 block()
+            } catch (e: CancellationException) {
+                // If cancelled, propagate cancellation immediately
+                Timber.d("Download retry cancelled on final attempt")
+                throw e
+            } catch (e: java.io.FileNotFoundException) {
+                // FileNotFoundException on final attempt - mark as failed
+                Timber.e(e, "FileNotFoundException on final attempt after $times attempts")
+                false
             } catch (e: Exception) {
                 Timber.e(e, "Download failed after $times attempts")
                 false
@@ -1761,10 +1911,13 @@ class SteamService : Service(), IChallengeUrlChanged {
         PluviaApp.events.on<AndroidEvent.EndProcess, Unit>(onEndProcess)
 
         notificationHelper = NotificationHelper(applicationContext)
-        
+
         // Clear active download status on service start (fleeting - doesn't persist across app restarts)
         clearActivelyDownloadingAppId()
-        
+
+        // Reset queue resume flag on service start (new session)
+        hasResumedQueueOnStart = false
+
         // Setup Wi-Fi connectivity monitoring for download-on-WiFi-only
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         // Determine initial Wi-Fi state
@@ -1787,7 +1940,7 @@ class SteamService : Service(), IChallengeUrlChanged {
                         info.cancel()
                     }
                     downloadJobs.clear()
-                    
+
                     // Clear active download status
                     clearActivelyDownloadingAppId()
                     notificationHelper.notify("Download paused – waiting for Wi-Fi")
@@ -2522,6 +2675,7 @@ class SteamService : Service(), IChallengeUrlChanged {
      * A buffered flow to parse so many PICS requests in a given moment.
      */
     private fun continuousPICSGetProductInfo(): Job = scope.launch {
+
         // Launch both coroutines within this parent job
         launch {
             appPicsChannel.receiveAsFlow()

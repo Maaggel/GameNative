@@ -112,17 +112,17 @@ class PluviaApp : SplitCompatApplication() {
         var inputControlsManager: InputControlsManager? = null
         var touchpadView: TouchpadView? = null
 
-        // Supabase client for game feedback
-        lateinit var supabase: SupabaseClient
+        // Supabase client for game feedback (nullable - only initialized if URL/key are provided)
+        var supabase: SupabaseClient? = null
             private set
 
-        // Initialize Supabase client
+        // Initialize Supabase client (only if URL/key are provided)
         @OptIn(SupabaseInternal::class)
         fun initSupabase() {
             Timber.d("Initializing Supabase client with URL: ${BuildConfig.SUPABASE_URL}")
             if (BuildConfig.SUPABASE_URL.isBlank() || BuildConfig.SUPABASE_KEY.isBlank()) {
-                Timber.e("Invalid Supabase URL or key - URL: ${BuildConfig.SUPABASE_URL}, key empty: ${BuildConfig.SUPABASE_KEY.isBlank()}")
-                throw IllegalStateException("Supabase URL or key is empty")
+                Timber.w("Supabase URL or key is empty - skipping Supabase initialization. URL: '${BuildConfig.SUPABASE_URL}', key empty: ${BuildConfig.SUPABASE_KEY.isBlank()}")
+                return
             }
 
             supabase = createSupabaseClient(

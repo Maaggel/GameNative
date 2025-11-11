@@ -630,6 +630,14 @@ object PrefManager {
             setPref(DOWNLOAD_ON_WIFI_ONLY, value)
         }
 
+    // Whether to automatically resume queued downloads when the app starts.
+    private val RESUME_QUEUE_ON_START = booleanPreferencesKey("resume_queue_on_start")
+    var resumeQueueOnStart: Boolean
+        get() = getPref(RESUME_QUEUE_ON_START, true)
+        set(value) {
+            setPref(RESUME_QUEUE_ON_START, value)
+        }
+
     private val USE_EXTERNAL_STORAGE = booleanPreferencesKey("use_external_storage")
     var useExternalStorage: Boolean
         get() = getPref(USE_EXTERNAL_STORAGE, false)

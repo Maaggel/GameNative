@@ -123,6 +123,29 @@ object DownloadStateUtils {
     fun isManuallyPaused(gameId: Int): Boolean {
         return PrefManager.manuallyPausedGames.contains(gameId)
     }
+
+    /**
+     * Checks if a game is available for automatic download start.
+     * A game is available for autostart if:
+     * - It's not installed
+     * - It has a partial download
+     * - It's not actively downloading
+     * - It's not manually paused
+     * 
+     * Note: This function can be used for games both in and out of downloadJobs.
+     * For games already in downloadJobs, they may be paused/queued and ready to resume.
+     * For games not in downloadJobs, they have partial downloads waiting to be started.
+     *
+     * @param gameId The game ID to check
+     * @return true if the game is available for autostart
+     */
+    fun isGameAvailableForAutostart(gameId: Int): Boolean {
+        return !SteamService.isAppInstalled(gameId) &&
+                SteamService.hasPartialDownload(gameId) &&
+                !SteamService.isActivelyDownloading(gameId) &&
+                !isManuallyPaused(gameId)
+    }
+
     /**
      * Determines if a download is actively downloading.
      * A download is considered downloading ONLY if it's the actively downloading game.
@@ -161,26 +184,40 @@ object DownloadStateUtils {
      * Determines if a download is currently validating.
      * Validation occurs when resuming - the job is active but progress is very small/zero
      * and there's a partial download.
+     * Note: If the download is actively downloading with meaningful progress, it's not validating - it's downloading.
      */
     fun isValidating(
         downloadInfo: DownloadInfo?,
         downloadProgress: Float,
         isJobActive: Boolean,
         hasPartialDownload: Boolean,
-        justResumed: Boolean = false
+        justResumed: Boolean = false,
+        isActivelyDownloading: Boolean = false
     ): Boolean {
+        // If actively downloading with meaningful progress, we're not validating - we're downloading
+        if (isActivelyDownloading && downloadProgress > 0.01f) {
+            return false
+        }
+        // Show validating if: job is active, progress is very low, and (has partial download or just resumed)
+        // AND we're not actively downloading with meaningful progress
         return downloadInfo != null && isJobActive && downloadProgress <= 0.0001f && (hasPartialDownload || justResumed)
     }
 
     /**
      * Determines if a download is starting (job is active but progress is 0 and no partial download exists).
+     * Note: If the download is actively downloading, it's not starting - it's downloading.
      */
     fun isStartingDownload(
         downloadInfo: DownloadInfo?,
         downloadProgress: Float,
         isJobActive: Boolean,
-        hasPartialDownload: Boolean
+        hasPartialDownload: Boolean,
+        isActivelyDownloading: Boolean = false
     ): Boolean {
+        // If actively downloading, we're not starting - we're downloading
+        if (isActivelyDownloading) {
+            return false
+        }
         return downloadInfo != null && isJobActive && downloadProgress <= 0.0001f && !hasPartialDownload
     }
 
@@ -220,7 +257,7 @@ object DownloadStateUtils {
         gameId: Int? = null
     ): DownloadStatus? {
         val isDownloading = isDownloading(downloadInfo, downloadProgress, isJobActive, isActivelyDownloading)
-        val isValidating = isValidating(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, justResumed)
+        val isValidating = isValidating(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, justResumed, isActivelyDownloading)
         val isPartiallyDownloaded = isPartiallyDownloaded(downloadProgress, hasPartialDownload)
         val isQueued = isQueued(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading)
 
@@ -289,8 +326,8 @@ object DownloadStateUtils {
     ): DownloadStateFlags {
         return DownloadStateFlags(
             isDownloading = isDownloading(downloadInfo, downloadProgress, isJobActive, isActivelyDownloading),
-            isStartingDownload = isStartingDownload(downloadInfo, downloadProgress, isJobActive, hasPartialDownload),
-            isValidating = isValidating(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, justResumed),
+            isStartingDownload = isStartingDownload(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading),
+            isValidating = isValidating(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, justResumed, isActivelyDownloading),
             isQueued = isQueued(downloadInfo, downloadProgress, isJobActive, hasPartialDownload, isActivelyDownloading),
             isPartiallyDownloaded = isPartiallyDownloaded(downloadProgress, hasPartialDownload),
             isActivelyDownloading = isActivelyDownloading
@@ -368,7 +405,7 @@ object DownloadStateUtils {
                     }
                 }
                 DownloadStatus.DOWNLOADING -> StatusTextResource(
-                    R.string.installing_percent,
+                    R.string.downloading_percent,
                     arrayOf(downloadProgress * 100)
                 )
                 DownloadStatus.COMPLETED -> StatusTextResource(R.string.installed)
